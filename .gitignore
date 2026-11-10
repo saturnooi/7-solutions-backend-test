@@ -1,5 +1,6 @@
-# Build output
+# Build output (tmp/ is Air's live-reload build directory)
 /bin/
+/tmp/
 
 # Test and coverage artifacts
 *.test

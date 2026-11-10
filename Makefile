@@ -1,18 +1,24 @@
 # Development and quality-gate commands.
 # Paths stay relative because the project directory may contain spaces.
 
-GO         ?= go
-GOLANGCI   ?= golangci-lint
-COVER_FILE ?= coverage.out
-COVER_HTML ?= coverage.html
+GO          ?= go
+GOLANGCI    ?= golangci-lint
+COVER_FILE  ?= coverage.out
+COVER_HTML  ?= coverage.html
+AIR_VERSION ?= v1.67.4
+# `go run pkg@version` pins Air without adding it to go.mod or requiring a global install.
+AIR         ?= $(GO) run github.com/air-verse/air@$(AIR_VERSION)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help fmt fmt-check build vet lint test test-race test-coverage \
+.PHONY: help dev fmt fmt-check build vet lint test test-race test-coverage \
         coverage-html coverage-check test-integration check clean
 
 help: ## Show available targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-zA-Z_-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' Makefile
+
+dev: ## Run the API with live reload (Air, config in .air.toml)
+	$(AIR) -c .air.toml
 
 fmt: ## Format all Go files in place
 	gofmt -w .
