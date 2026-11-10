@@ -1,0 +1,17 @@
+# Build output
+/bin/
+
+# Test and coverage artifacts
+*.test
+coverage*.out
+coverage.html
+
+# Local environment files may hold real secrets; only the example is committed
+.env
+.env.*
+!.env.example
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
