@@ -20,6 +20,10 @@ packages:
     interfaces:
       UserService: {}
       Authenticator: {}
+  user-management-api/internal/adapters/grpc:
+    interfaces:
+      UserService: {}
+      Authenticator: {}
   user-management-api/internal/adapters/worker:
     interfaces:
       UserCounter: {}
