@@ -1,8 +1,37 @@
 # User Management API
 
-A user management API in Go. The target design uses REST and gRPC, MongoDB, JWT (HS256), and hexagonal architecture (ports and adapters).
+A user management API in Go, with a REST API and a gRPC API over the same use cases, MongoDB for storage, JWT (HS256) authentication, and a hexagonal architecture (ports and adapters). It also runs a background user-count worker, shuts down gracefully, and ships as a small Docker image.
 
-The project is built one feature at a time. Each feature must pass the full quality gate (`make check`) before the next one starts. The status table below shows what exists today.
+The project was built one feature at a time. Each feature passed the full quality gate (`make check`) before the next one started.
+
+## Quick start
+
+```bash
+echo "JWT_SECRET=$(openssl rand -base64 48)" >> .env
+docker compose up --build
+```
+
+The REST API is then on `http://localhost:8080` and gRPC on `localhost:9090`. To try it, [register, log in and use the token](#using-the-token). For development without Docker, see [Running locally](#running-locally).
+
+## Requirements coverage
+
+| Requirement | Where |
+|---|---|
+| User model: ID, name, unique email, hashed password, creation time | [User rules](#user-rules), [internal/domain/user](internal/domain/user) |
+| Registration, and login that returns a JWT | [POST /api/v1/auth/register](#post-apiv1authregister), [POST /api/v1/auth/login](#post-apiv1authlogin) |
+| HS256 tokens, validated by middleware on protected routes | [JWT](#jwt), [internal/adapters/http/auth.go](internal/adapters/http/auth.go) |
+| Create, get by ID, list, update name or email, delete | [REST API](#rest-api) |
+| Official MongoDB Go driver | [internal/adapters/repository/mongodb](internal/adapters/repository/mongodb) |
+| Logging middleware: method, path, execution time | [Logging](#logging) |
+| Goroutine logging the user count every 10 seconds | [Background worker](#background-worker) |
+| Unit tests with the standard `testing` package, MongoDB mocked where appropriate | [Testing and coverage](#testing-and-coverage) |
+| Bonus: Docker and docker-compose | [Running with Docker](#running-with-docker) |
+| Bonus: interfaces that abstract MongoDB | `UserRepository` port in [internal/application/userservice/ports.go](internal/application/userservice/ports.go) |
+| Bonus: input validation | [User rules](#user-rules) |
+| Bonus: graceful shutdown with `context.Context` | [Graceful shutdown](#graceful-shutdown) |
+| Bonus: gRPC `CreateUser` and `GetUser`, secured with token metadata | [gRPC](#grpc) |
+| Bonus: hexagonal architecture | [Architecture](#architecture) |
+| Deliverables: setup, JWT guide, sample requests and responses, assumptions and design decisions | This README: [Assumptions](#assumptions), [Design decisions](#design-decisions) |
 
 ## Status
 
@@ -22,7 +51,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 11 | gRPC: `CreateUser` and `GetUser`, token required | Done |
 | 12 | Docker and Docker Compose: API image, health checks, full stack | Done |
 | 13 | End-to-end integration tests through the real composition root | Done |
-| 14 | Final quality gate | Planned |
+| 14 | Final quality gate: requirements, architecture, security, tests, Docker, documentation | Done |
 
 ## Architecture
 
@@ -747,6 +776,22 @@ These packages are excluded from the unit-test gate:
 | `internal/adapters/repository/mongodb` | Needs a real MongoDB, so it is covered by `make test-integration`. |
 
 Because of these exclusions, the gate's `OVERALL` figure can differ from the `total` printed by `go tool cover -func`, which counts every package.
+
+## Assumptions
+
+The requirements leave some points open. These are the readings this implementation takes:
+
+- **"User registration" and "create a new user" are the same operation through two doors.** `POST /api/v1/auth/register` is public so anyone can sign up. `POST /api/v1/users` does the same for an authenticated caller. Both use one use case and the same rules.
+- **There are no roles.** Any authenticated user may list and read every user. A user may update and delete only their own account (`403` otherwise), so one account cannot damage another.
+- **A deleted user's tokens must stop working at once.** Every authenticated request therefore confirms that the token's user still exists.
+- **"Update a user's name or email" is a partial update.** `PATCH` changes only the fields sent. The password cannot be changed, because that should require the current password, which the requirements do not cover.
+- **Email addresses are case-insensitive.** They are trimmed and lowercased before they are stored or looked up, and uniqueness applies to that form.
+- **"List all users" is paginated.** It returns at most 100 users per request (20 by default), newest first, so the response size stays bounded.
+- **IDs are MongoDB ObjectIDs,** shown as 24 hexadecimal characters.
+- **"Every 10 seconds" starts after startup.** The first count is logged 10 seconds after the API starts.
+- **The gRPC server is secured.** "Optionally secure with token metadata" is read as a yes, and both RPCs take the same bearer token as REST.
+- **"Mock MongoDB interactions where appropriate" means at the port.** Unit tests mock the `UserRepository` interface. The MongoDB adapter itself is tested against a real database, because a mocked driver would not show real behaviour such as the unique index.
+- **TLS is out of scope for the service.** It is expected to end at a proxy or load balancer in front of the API.
 
 ## Design decisions
 
