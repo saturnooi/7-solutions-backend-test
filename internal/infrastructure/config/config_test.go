@@ -1,9 +1,36 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestLoad(t *testing.T) {
 	t.Parallel()
+
+	secret := strings.Repeat("s", 32)
+	required := func(extra map[string]string) map[string]string {
+		env := map[string]string{"MONGO_URI": "mongodb://localhost:27017", "JWT_SECRET": secret}
+		for k, v := range extra {
+			env[k] = v
+		}
+		return env
+	}
+	defaults := Config{
+		HTTPAddr:      ":8080",
+		MongoURI:      "mongodb://localhost:27017",
+		MongoDatabase: "user_management",
+		BcryptCost:    12,
+		JWTSecret:     secret,
+		JWTIssuer:     "user-management-api",
+		JWTTTL:        time.Hour,
+	}
+	with := func(change func(*Config)) Config {
+		c := defaults
+		change(&c)
+		return c
+	}
 
 	tests := []struct {
 		name    string
@@ -12,14 +39,9 @@ func TestLoad(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "defaults when only MONGO_URI is set",
-			env:  map[string]string{"MONGO_URI": "mongodb://localhost:27017"},
-			want: Config{
-				HTTPAddr:      ":8080",
-				MongoURI:      "mongodb://localhost:27017",
-				MongoDatabase: "user_management",
-				BcryptCost:    12,
-			},
+			name: "defaults when only required variables are set",
+			env:  required(nil),
+			want: defaults,
 		},
 		{
 			name: "every variable set",
@@ -28,48 +50,77 @@ func TestLoad(t *testing.T) {
 				"MONGO_URI":      "mongodb://mongo:27017",
 				"MONGO_DATABASE": "users_prod",
 				"BCRYPT_COST":    "14",
+				"JWT_SECRET":     secret + "-longer",
+				"JWT_ISSUER":     "users.example.com",
+				"JWT_TTL":        "15m",
 			},
 			want: Config{
 				HTTPAddr:      "127.0.0.1:9000",
 				MongoURI:      "mongodb://mongo:27017",
 				MongoDatabase: "users_prod",
 				BcryptCost:    14,
+				JWTSecret:     secret + "-longer",
+				JWTIssuer:     "users.example.com",
+				JWTTTL:        15 * time.Minute,
 			},
 		},
 		{
 			name: "lowest allowed bcrypt cost",
-			env:  map[string]string{"MONGO_URI": "mongodb://localhost:27017", "BCRYPT_COST": "10"},
-			want: Config{
-				HTTPAddr:      ":8080",
-				MongoURI:      "mongodb://localhost:27017",
-				MongoDatabase: "user_management",
-				BcryptCost:    10,
-			},
+			env:  required(map[string]string{"BCRYPT_COST": "10"}),
+			want: with(func(c *Config) { c.BcryptCost = 10 }),
 		},
 		{
 			name:    "missing MONGO_URI",
-			env:     map[string]string{},
+			env:     map[string]string{"JWT_SECRET": secret},
 			wantErr: "config: MONGO_URI is required",
 		},
 		{
 			name:    "bcrypt cost is not a number",
-			env:     map[string]string{"MONGO_URI": "mongodb://localhost:27017", "BCRYPT_COST": "high"},
+			env:     required(map[string]string{"BCRYPT_COST": "high"}),
 			wantErr: "config: BCRYPT_COST must be an integer from 10 to 31",
 		},
 		{
 			name:    "bcrypt cost below 10",
-			env:     map[string]string{"MONGO_URI": "mongodb://localhost:27017", "BCRYPT_COST": "9"},
+			env:     required(map[string]string{"BCRYPT_COST": "9"}),
 			wantErr: "config: BCRYPT_COST must be an integer from 10 to 31",
 		},
 		{
 			name:    "bcrypt cost above 31",
-			env:     map[string]string{"MONGO_URI": "mongodb://localhost:27017", "BCRYPT_COST": "32"},
+			env:     required(map[string]string{"BCRYPT_COST": "32"}),
 			wantErr: "config: BCRYPT_COST must be an integer from 10 to 31",
 		},
 		{
-			name:    "every problem is reported",
-			env:     map[string]string{"BCRYPT_COST": "4"},
-			wantErr: "config: MONGO_URI is required\nBCRYPT_COST must be an integer from 10 to 31",
+			name:    "missing JWT_SECRET",
+			env:     map[string]string{"MONGO_URI": "mongodb://localhost:27017"},
+			wantErr: "config: JWT_SECRET is required and must be at least 32 bytes",
+		},
+		{
+			name:    "JWT_SECRET of 31 bytes",
+			env:     required(map[string]string{"JWT_SECRET": strings.Repeat("s", 31)}),
+			wantErr: "config: JWT_SECRET is required and must be at least 32 bytes",
+		},
+		{
+			name:    "JWT_TTL is not a duration",
+			env:     required(map[string]string{"JWT_TTL": "an hour"}),
+			wantErr: "config: JWT_TTL must be a positive duration such as 15m or 1h",
+		},
+		{
+			name:    "JWT_TTL is zero",
+			env:     required(map[string]string{"JWT_TTL": "0s"}),
+			wantErr: "config: JWT_TTL must be a positive duration such as 15m or 1h",
+		},
+		{
+			name:    "JWT_TTL is negative",
+			env:     required(map[string]string{"JWT_TTL": "-1h"}),
+			wantErr: "config: JWT_TTL must be a positive duration such as 15m or 1h",
+		},
+		{
+			name: "every problem is reported",
+			env:  map[string]string{"BCRYPT_COST": "4", "JWT_TTL": "soon"},
+			wantErr: "config: MONGO_URI is required\n" +
+				"BCRYPT_COST must be an integer from 10 to 31\n" +
+				"JWT_SECRET is required and must be at least 32 bytes\n" +
+				"JWT_TTL must be a positive duration such as 15m or 1h",
 		},
 	}
 
@@ -95,5 +146,22 @@ func TestLoad(t *testing.T) {
 				t.Errorf("Load() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoad_ErrorsNeverContainTheSecret(t *testing.T) {
+	t.Parallel()
+
+	const shortSecret = "too-short-secret"
+
+	_, err := Load(func(key string) string {
+		return map[string]string{"JWT_SECRET": shortSecret}[key]
+	})
+
+	if err == nil {
+		t.Fatal("Load() error = nil, want an error")
+	}
+	if strings.Contains(err.Error(), shortSecret) {
+		t.Errorf("Load() error leaks JWT_SECRET: %q", err)
 	}
 }

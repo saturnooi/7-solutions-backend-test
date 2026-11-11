@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -14,6 +15,9 @@ const (
 	defaultBcryptCost    = 12
 	minBcryptCost        = bcrypt.DefaultCost
 	maxBcryptCost        = bcrypt.MaxCost
+	defaultJWTIssuer     = "user-management-api"
+	defaultJWTTTL        = time.Hour
+	minJWTSecretBytes    = 32
 )
 
 type Config struct {
@@ -21,6 +25,9 @@ type Config struct {
 	MongoURI      string
 	MongoDatabase string
 	BcryptCost    int
+	JWTSecret     string
+	JWTIssuer     string
+	JWTTTL        time.Duration
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -29,6 +36,9 @@ func Load(getenv func(string) string) (Config, error) {
 		MongoURI:      getenv("MONGO_URI"),
 		MongoDatabase: valueOrDefault(getenv("MONGO_DATABASE"), defaultMongoDatabase),
 		BcryptCost:    defaultBcryptCost,
+		JWTSecret:     getenv("JWT_SECRET"),
+		JWTIssuer:     valueOrDefault(getenv("JWT_ISSUER"), defaultJWTIssuer),
+		JWTTTL:        defaultJWTTTL,
 	}
 
 	var errs []error
@@ -41,6 +51,17 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, fmt.Errorf("BCRYPT_COST must be an integer from %d to %d", minBcryptCost, maxBcryptCost))
 		} else {
 			cfg.BcryptCost = cost
+		}
+	}
+	if len(cfg.JWTSecret) < minJWTSecretBytes {
+		errs = append(errs, fmt.Errorf("JWT_SECRET is required and must be at least %d bytes", minJWTSecretBytes))
+	}
+	if raw := getenv("JWT_TTL"); raw != "" {
+		ttl, err := time.ParseDuration(raw)
+		if err != nil || ttl <= 0 {
+			errs = append(errs, errors.New("JWT_TTL must be a positive duration such as 15m or 1h"))
+		} else {
+			cfg.JWTTTL = ttl
 		}
 	}
 
