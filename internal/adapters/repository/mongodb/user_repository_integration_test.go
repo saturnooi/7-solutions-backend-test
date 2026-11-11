@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,6 +165,54 @@ func TestUserRepository_FindByEmail(t *testing.T) {
 			}
 			if tt.wantErr == nil && got.CreatedAt.Location() != time.UTC {
 				t.Errorf("CreatedAt location = %v, want UTC", got.CreatedAt.Location())
+			}
+		})
+	}
+}
+
+func TestUserRepository_FindByID(t *testing.T) {
+	t.Parallel()
+
+	repo, _ := newTestRepository(t)
+	created, err := repo.Create(t.Context(), newTestUser(t, "alice@example.com"))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		id        string
+		cancelled bool
+		want      user.User
+		wantErr   error
+	}{
+		{name: "stored id", id: created.ID, want: created},
+		{name: "upper-case hex of the stored id", id: strings.ToUpper(created.ID), want: created},
+		{name: "valid id that is not stored", id: bson.NewObjectID().Hex(), wantErr: user.ErrNotFound},
+		{name: "cancelled context", id: created.ID, cancelled: true, wantErr: context.Canceled},
+		{name: "not hex is rejected before querying", id: "not-an-object-id-at-all!", cancelled: true, wantErr: user.ErrInvalidID},
+		{name: "23 characters is rejected before querying", id: created.ID[:23], cancelled: true, wantErr: user.ErrInvalidID},
+		{name: "empty id is rejected before querying", id: "", cancelled: true, wantErr: user.ErrInvalidID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+
+			got, err := repo.FindByID(ctx, tt.id)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("FindByID() error = %v, want %v", err, tt.wantErr)
+			}
+			if got.ID != tt.want.ID || got.Name != tt.want.Name || got.Email != tt.want.Email ||
+				got.PasswordHash != tt.want.PasswordHash || !got.CreatedAt.Equal(tt.want.CreatedAt) {
+				t.Errorf("FindByID() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
