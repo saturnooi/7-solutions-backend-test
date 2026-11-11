@@ -1,8 +1,10 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -109,6 +111,110 @@ func TestCreateUser(t *testing.T) {
 				if calls[0].In != want {
 					t.Errorf("Register received %+v, want %+v", calls[0].In, want)
 				}
+			}
+		})
+	}
+}
+
+func TestGetUser(t *testing.T) {
+	t.Parallel()
+
+	accept := func(string) (string, error) { return callerID, nil }
+
+	tests := []struct {
+		name          string
+		path          string
+		authorization string
+		getUser       func(context.Context, string) (user.User, error)
+		wantStatus    int
+		wantBody      string
+		wantID        string
+		wantLog       string
+	}{
+		{
+			name:          "existing user",
+			path:          usersPath + "/" + created.ID,
+			authorization: "Bearer valid.token.signature",
+			getUser:       func(context.Context, string) (user.User, error) { return created, nil },
+			wantStatus:    http.StatusOK,
+			wantBody:      createdBody,
+			wantID:        created.ID,
+		},
+		{
+			name:          "unknown id",
+			path:          usersPath + "/6730f1c2a1b2c3d4e5f60000",
+			authorization: "Bearer valid.token.signature",
+			getUser: func(context.Context, string) (user.User, error) {
+				return user.User{}, fmt.Errorf("get user: %w", user.ErrNotFound)
+			},
+			wantStatus: http.StatusNotFound,
+			wantBody:   `{"error":{"code":"user_not_found","message":"user not found"}}`,
+			wantID:     "6730f1c2a1b2c3d4e5f60000",
+		},
+		{
+			name:          "malformed id",
+			path:          usersPath + "/not-an-id",
+			authorization: "Bearer valid.token.signature",
+			getUser: func(context.Context, string) (user.User, error) {
+				return user.User{}, fmt.Errorf("get user: %w", user.ErrInvalidID)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   `{"error":{"code":"invalid_id","message":"id must be a 24-character hexadecimal string"}}`,
+			wantID:     "not-an-id",
+		},
+		{
+			name:          "internal error is hidden from the client and logged",
+			path:          usersPath + "/" + created.ID,
+			authorization: "Bearer valid.token.signature",
+			getUser: func(context.Context, string) (user.User, error) {
+				return user.User{}, errors.New("get user: mongodb: find user by id: connection reset")
+			},
+			wantStatus: http.StatusInternalServerError,
+			wantBody:   `{"error":{"code":"internal_error","message":"internal server error"}}`,
+			wantID:     created.ID,
+			wantLog:    "connection reset",
+		},
+		{
+			name:       "no token",
+			path:       usersPath + "/" + created.ID,
+			wantStatus: http.StatusUnauthorized,
+			wantBody:   unauthorizedBody,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service := &UserServiceMock{GetUserFunc: tt.getUser}
+			var logs bytes.Buffer
+			router := NewHandler(service, &TokenVerifierMock{VerifyFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.path, nil)
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+			rec := httptest.NewRecorder()
+
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if got := strings.TrimSuffix(rec.Body.String(), "\n"); got != tt.wantBody {
+				t.Errorf("body = %s\nwant   %s", got, tt.wantBody)
+			}
+			calls := service.GetUserCalls()
+			switch {
+			case tt.wantID == "" && len(calls) != 0:
+				t.Errorf("GetUser calls = %d, want 0", len(calls))
+			case tt.wantID != "" && (len(calls) != 1 || calls[0].ID != tt.wantID):
+				t.Errorf("GetUser calls = %+v, want one call with %q", calls, tt.wantID)
+			}
+			if tt.wantLog == "" && logs.Len() > 0 {
+				t.Errorf("unexpected log output: %s", logs.String())
+			}
+			if tt.wantLog != "" && !strings.Contains(logs.String(), tt.wantLog) {
+				t.Errorf("log = %s, want it to contain %q", logs.String(), tt.wantLog)
 			}
 		})
 	}
