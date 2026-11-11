@@ -19,12 +19,12 @@ type UserService interface {
 
 type Handler struct {
 	users  UserService
-	tokens TokenVerifier
+	auth   Authenticator
 	logger *slog.Logger
 }
 
-func NewHandler(users UserService, tokens TokenVerifier, logger *slog.Logger) *Handler {
-	return &Handler{users: users, tokens: tokens, logger: logger}
+func NewHandler(users UserService, auth Authenticator, logger *slog.Logger) *Handler {
+	return &Handler{users: users, auth: auth, logger: logger}
 }
 
 func (h *Handler) Routes() http.Handler {

@@ -12,69 +12,75 @@ import (
 	"user-management-api/internal/domain/user"
 )
 
-// Ensure that TokenVerifierMock does implement TokenVerifier.
+// Ensure that AuthenticatorMock does implement Authenticator.
 // If this is not the case, regenerate this file with mockery.
-var _ TokenVerifier = &TokenVerifierMock{}
+var _ Authenticator = &AuthenticatorMock{}
 
-// TokenVerifierMock is a mock implementation of TokenVerifier.
+// AuthenticatorMock is a mock implementation of Authenticator.
 //
-//	func TestSomethingThatUsesTokenVerifier(t *testing.T) {
+//	func TestSomethingThatUsesAuthenticator(t *testing.T) {
 //
-//		// make and configure a mocked TokenVerifier
-//		mockedTokenVerifier := &TokenVerifierMock{
-//			VerifyFunc: func(token string) (string, error) {
-//				panic("mock out the Verify method")
+//		// make and configure a mocked Authenticator
+//		mockedAuthenticator := &AuthenticatorMock{
+//			AuthenticateFunc: func(ctx context.Context, token string) (string, error) {
+//				panic("mock out the Authenticate method")
 //			},
 //		}
 //
-//		// use mockedTokenVerifier in code that requires TokenVerifier
+//		// use mockedAuthenticator in code that requires Authenticator
 //		// and then make assertions.
 //
 //	}
-type TokenVerifierMock struct {
-	// VerifyFunc mocks the Verify method.
-	VerifyFunc func(token string) (string, error)
+type AuthenticatorMock struct {
+	// AuthenticateFunc mocks the Authenticate method.
+	AuthenticateFunc func(ctx context.Context, token string) (string, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
-		// Verify holds details about calls to the Verify method.
-		Verify []struct {
+		// Authenticate holds details about calls to the Authenticate method.
+		Authenticate []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Token is the token argument value.
 			Token string
 		}
 	}
-	lockVerify sync.RWMutex
+	lockAuthenticate sync.RWMutex
 }
 
-// Verify calls VerifyFunc.
-func (mock *TokenVerifierMock) Verify(token string) (string, error) {
-	if mock.VerifyFunc == nil {
-		panic("TokenVerifierMock.VerifyFunc: method is nil but TokenVerifier.Verify was just called")
+// Authenticate calls AuthenticateFunc.
+func (mock *AuthenticatorMock) Authenticate(ctx context.Context, token string) (string, error) {
+	if mock.AuthenticateFunc == nil {
+		panic("AuthenticatorMock.AuthenticateFunc: method is nil but Authenticator.Authenticate was just called")
 	}
 	callInfo := struct {
+		Ctx   context.Context
 		Token string
 	}{
+		Ctx:   ctx,
 		Token: token,
 	}
-	mock.lockVerify.Lock()
-	mock.calls.Verify = append(mock.calls.Verify, callInfo)
-	mock.lockVerify.Unlock()
-	return mock.VerifyFunc(token)
+	mock.lockAuthenticate.Lock()
+	mock.calls.Authenticate = append(mock.calls.Authenticate, callInfo)
+	mock.lockAuthenticate.Unlock()
+	return mock.AuthenticateFunc(ctx, token)
 }
 
-// VerifyCalls gets all the calls that were made to Verify.
+// AuthenticateCalls gets all the calls that were made to Authenticate.
 // Check the length with:
 //
-//	len(mockedTokenVerifier.VerifyCalls())
-func (mock *TokenVerifierMock) VerifyCalls() []struct {
+//	len(mockedAuthenticator.AuthenticateCalls())
+func (mock *AuthenticatorMock) AuthenticateCalls() []struct {
+	Ctx   context.Context
 	Token string
 } {
 	var calls []struct {
+		Ctx   context.Context
 		Token string
 	}
-	mock.lockVerify.RLock()
-	calls = mock.calls.Verify
-	mock.lockVerify.RUnlock()
+	mock.lockAuthenticate.RLock()
+	calls = mock.calls.Authenticate
+	mock.lockAuthenticate.RUnlock()
 	return calls
 }
 

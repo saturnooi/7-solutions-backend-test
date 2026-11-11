@@ -126,7 +126,7 @@ func TestRegister(t *testing.T) {
 
 			service := &UserServiceMock{RegisterFunc: tt.register}
 			var logs bytes.Buffer
-			router := NewHandler(service, &TokenVerifierMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, registerPath, strings.NewReader(tt.body))
 			rec := httptest.NewRecorder()
 
@@ -172,7 +172,7 @@ func TestRegister(t *testing.T) {
 func TestRegister_OnlyAcceptsPost(t *testing.T) {
 	t.Parallel()
 
-	router := NewHandler(&UserServiceMock{}, &TokenVerifierMock{}, slog.New(slog.DiscardHandler)).Routes()
+	router := NewHandler(&UserServiceMock{}, &AuthenticatorMock{}, slog.New(slog.DiscardHandler)).Routes()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, registerPath, nil)
 	rec := httptest.NewRecorder()
 

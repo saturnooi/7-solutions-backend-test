@@ -2,12 +2,15 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
+
+	"user-management-api/internal/application/userservice"
 )
 
-type TokenVerifier interface {
-	Verify(token string) (string, error)
+type Authenticator interface {
+	Authenticate(ctx context.Context, token string) (string, error)
 }
 
 type userIDKey struct{}
@@ -19,9 +22,13 @@ func (h *Handler) requireAuth(next http.Handler) http.Handler {
 			writeUnauthorized(w, "Bearer")
 			return
 		}
-		userID, err := h.tokens.Verify(token)
-		if err != nil {
+		userID, err := h.auth.Authenticate(r.Context(), token)
+		if errors.Is(err, userservice.ErrUnauthenticated) {
 			writeUnauthorized(w, `Bearer error="invalid_token"`)
+			return
+		}
+		if err != nil {
+			h.writeServiceError(w, r, err)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey{}, userID)))

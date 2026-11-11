@@ -37,12 +37,12 @@ var created = user.User{
 func TestCreateUser(t *testing.T) {
 	t.Parallel()
 
-	accept := func(string) (string, error) { return callerID, nil }
+	accept := func(context.Context, string) (string, error) { return callerID, nil }
 
 	tests := []struct {
 		name          string
 		authorization string
-		verify        func(string) (string, error)
+		authenticate  func(context.Context, string) (string, error)
 		register      func(context.Context, userservice.RegisterInput) (user.User, error)
 		wantStatus    int
 		wantBody      string
@@ -51,7 +51,7 @@ func TestCreateUser(t *testing.T) {
 		{
 			name:          "authenticated caller creates a user",
 			authorization: "Bearer valid.token.signature",
-			verify:        accept,
+			authenticate:  accept,
 			register:      func(context.Context, userservice.RegisterInput) (user.User, error) { return created, nil },
 			wantStatus:    http.StatusCreated,
 			wantBody:      createdBody,
@@ -60,7 +60,7 @@ func TestCreateUser(t *testing.T) {
 		{
 			name:          "validation still applies",
 			authorization: "Bearer valid.token.signature",
-			verify:        accept,
+			authenticate:  accept,
 			register: func(context.Context, userservice.RegisterInput) (user.User, error) {
 				return user.User{}, &user.ValidationError{Fields: []user.FieldError{{Field: "password", Message: "must be at least 8 characters"}}}
 			},
@@ -76,9 +76,11 @@ func TestCreateUser(t *testing.T) {
 		{
 			name:          "rejected token",
 			authorization: "Bearer forged.token.signature",
-			verify:        func(string) (string, error) { return "", errors.New("jwt: invalid token") },
-			wantStatus:    http.StatusUnauthorized,
-			wantBody:      unauthorizedBody,
+			authenticate: func(context.Context, string) (string, error) {
+				return "", fmt.Errorf("%w: jwt: invalid token", userservice.ErrUnauthenticated)
+			},
+			wantStatus: http.StatusUnauthorized,
+			wantBody:   unauthorizedBody,
 		},
 	}
 
@@ -87,7 +89,7 @@ func TestCreateUser(t *testing.T) {
 			t.Parallel()
 
 			service := &UserServiceMock{RegisterFunc: tt.register}
-			router := NewHandler(service, &TokenVerifierMock{VerifyFunc: tt.verify}, slog.New(slog.DiscardHandler)).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: tt.authenticate}, slog.New(slog.DiscardHandler)).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, usersPath, strings.NewReader(createBody))
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -119,7 +121,7 @@ func TestCreateUser(t *testing.T) {
 func TestGetUser(t *testing.T) {
 	t.Parallel()
 
-	accept := func(string) (string, error) { return callerID, nil }
+	accept := func(context.Context, string) (string, error) { return callerID, nil }
 
 	tests := []struct {
 		name          string
@@ -188,7 +190,7 @@ func TestGetUser(t *testing.T) {
 
 			service := &UserServiceMock{GetUserFunc: tt.getUser}
 			var logs bytes.Buffer
-			router := NewHandler(service, &TokenVerifierMock{VerifyFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.path, nil)
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -230,7 +232,7 @@ func TestListUsers(t *testing.T) {
 		PasswordHash: "$2a$12$another-stored-hash",
 		CreatedAt:    time.Date(2026, time.November, 11, 9, 0, 0, 0, time.UTC),
 	}
-	accept := func(string) (string, error) { return callerID, nil }
+	accept := func(context.Context, string) (string, error) { return callerID, nil }
 	pageOf := func(users ...user.User) func(context.Context, userservice.ListInput) (userservice.UserPage, error) {
 		return func(_ context.Context, in userservice.ListInput) (userservice.UserPage, error) {
 			return userservice.UserPage{Users: users, Limit: in.Limit, Offset: in.Offset}, nil
@@ -327,7 +329,7 @@ func TestListUsers(t *testing.T) {
 
 			service := &UserServiceMock{ListUsersFunc: tt.list}
 			var logs bytes.Buffer
-			router := NewHandler(service, &TokenVerifierMock{VerifyFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, usersPath+tt.query, nil)
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -371,7 +373,7 @@ func TestUpdateUser(t *testing.T) {
 		PasswordHash: "$2a$12$stored-hash-value",
 		CreatedAt:    time.Date(2026, time.November, 11, 9, 0, 0, 0, time.UTC),
 	}
-	accept := func(string) (string, error) { return callerID, nil }
+	accept := func(context.Context, string) (string, error) { return callerID, nil }
 	returns := func(u user.User, err error) func(context.Context, string, string, userservice.UpdateInput) (user.User, error) {
 		return func(context.Context, string, string, userservice.UpdateInput) (user.User, error) { return u, err }
 	}
@@ -493,7 +495,7 @@ func TestUpdateUser(t *testing.T) {
 
 			service := &UserServiceMock{UpdateUserFunc: tt.update}
 			var logs bytes.Buffer
-			router := NewHandler(service, &TokenVerifierMock{VerifyFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, usersPath+"/"+tt.target, strings.NewReader(tt.body))
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -553,20 +555,30 @@ func showInput(in userservice.UpdateInput) string {
 	return fmt.Sprintf("{Name: %s, Email: %s}", show(in.Name), show(in.Email))
 }
 
-func TestCreateUser_WithRealJWT(t *testing.T) {
+type finderFunc func(ctx context.Context, id string) (user.User, error)
+
+func (f finderFunc) FindByID(ctx context.Context, id string) (user.User, error) { return f(ctx, id) }
+
+func TestProtectedRoute_WithRealAuthentication(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
 	verifier := newJWTService(t, testJWTSecret, func() time.Time { return now })
+	exists := finderFunc(func(context.Context, string) (user.User, error) { return created, nil })
+	deleted := finderFunc(func(context.Context, string) (user.User, error) {
+		return user.User{}, fmt.Errorf("mongodb: find user by id: %w", user.ErrNotFound)
+	})
 
 	tests := []struct {
 		name       string
 		issuer     *auth.JWTService
+		users      finderFunc
 		wantStatus int
 	}{
-		{name: "token from login", issuer: verifier, wantStatus: http.StatusCreated},
-		{name: "expired token", issuer: newJWTService(t, testJWTSecret, func() time.Time { return now.Add(-2 * time.Hour) }), wantStatus: http.StatusUnauthorized},
-		{name: "token signed with another secret", issuer: newJWTService(t, "another-secret-that-is-at-least-32-bytes", func() time.Time { return now }), wantStatus: http.StatusUnauthorized},
+		{name: "token from login for an existing user", issuer: verifier, users: exists, wantStatus: http.StatusCreated},
+		{name: "valid token whose user was deleted", issuer: verifier, users: deleted, wantStatus: http.StatusUnauthorized},
+		{name: "expired token", issuer: newJWTService(t, testJWTSecret, func() time.Time { return now.Add(-2 * time.Hour) }), users: exists, wantStatus: http.StatusUnauthorized},
+		{name: "token signed with another secret", issuer: newJWTService(t, "another-secret-that-is-at-least-32-bytes", func() time.Time { return now }), users: exists, wantStatus: http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
@@ -578,7 +590,7 @@ func TestCreateUser_WithRealJWT(t *testing.T) {
 				t.Fatalf("Issue() error = %v", err)
 			}
 			service := &UserServiceMock{RegisterFunc: func(context.Context, userservice.RegisterInput) (user.User, error) { return created, nil }}
-			router := NewHandler(service, verifier, slog.New(slog.DiscardHandler)).Routes()
+			router := NewHandler(service, userservice.NewAuthenticator(verifier, tt.users), slog.New(slog.DiscardHandler)).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, usersPath, strings.NewReader(createBody))
 			req.Header.Set("Authorization", "Bearer "+token.Value)
 			rec := httptest.NewRecorder()
