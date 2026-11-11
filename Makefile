@@ -8,10 +8,12 @@ COVER_HTML  ?= coverage.html
 AIR_VERSION ?= v1.67.4
 # `go run pkg@version` pins Air without adding it to go.mod or requiring a global install.
 AIR         ?= $(GO) run github.com/air-verse/air@$(AIR_VERSION)
+MOCKERY_VERSION ?= v3.9.1
+MOCKERY         ?= $(GO) run github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev db-up db-down fmt fmt-check build vet lint test test-race \
+.PHONY: help dev db-up db-down mocks fmt fmt-check build vet lint test test-race \
         test-coverage coverage-html coverage-check test-integration check clean
 
 help: ## Show available targets
@@ -25,6 +27,9 @@ db-up: ## Start MongoDB in Docker and wait until it is healthy
 
 db-down: ## Stop MongoDB (data stays in the mongo-data volume)
 	docker compose down
+
+mocks: ## Regenerate test mocks from .mockery.yml
+	$(MOCKERY)
 
 fmt: ## Format all Go files in place
 	gofmt -w .
