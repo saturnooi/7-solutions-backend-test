@@ -13,9 +13,12 @@ import (
 )
 
 const (
-	usersCollection = "users"
-	emailIndexName  = "email_unique"
+	usersCollection    = "users"
+	emailIndexName     = "email_unique"
+	createdAtIndexName = "created_at_desc"
 )
+
+var newestFirst = bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}
 
 type UserRepository struct {
 	users *mongo.Collection
@@ -26,9 +29,15 @@ func NewUserRepository(db *mongo.Database) *UserRepository {
 }
 
 func (r *UserRepository) EnsureIndexes(ctx context.Context) error {
-	_, err := r.users.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "email", Value: 1}},
-		Options: options.Index().SetName(emailIndexName).SetUnique(true),
+	_, err := r.users.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys:    bson.D{{Key: "email", Value: 1}},
+			Options: options.Index().SetName(emailIndexName).SetUnique(true),
+		},
+		{
+			Keys:    newestFirst,
+			Options: options.Index().SetName(createdAtIndexName),
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("mongodb: ensure user indexes: %w", err)
@@ -57,6 +66,23 @@ func (r *UserRepository) FindByID(ctx context.Context, id string) (user.User, er
 		return user.User{}, fmt.Errorf("mongodb: find user by id: %w", user.ErrInvalidID)
 	}
 	return r.findOne(ctx, "find user by id", bson.D{{Key: "_id", Value: oid}})
+}
+
+func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]user.User, error) {
+	opts := options.Find().SetSort(newestFirst).SetSkip(int64(offset)).SetLimit(int64(limit))
+	cursor, err := r.users.Find(ctx, bson.D{}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("mongodb: list users: %w", err)
+	}
+	var docs []userDocument
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, fmt.Errorf("mongodb: list users: %w", err)
+	}
+	users := make([]user.User, len(docs))
+	for i, doc := range docs {
+		users[i] = doc.toDomain()
+	}
+	return users, nil
 }
 
 func (r *UserRepository) findOne(ctx context.Context, operation string, filter bson.D) (user.User, error) {
