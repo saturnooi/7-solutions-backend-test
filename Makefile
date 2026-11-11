@@ -12,10 +12,11 @@ MOCKERY_VERSION ?= v3.9.1
 MOCKERY         ?= $(GO) run github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
 PROTOC_GEN_GO_VERSION      ?= v1.36.12
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
+GOVULNCHECK_VERSION        ?= v1.9.0
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev db-up db-down mocks proto fmt fmt-check build vet lint test test-race \
+.PHONY: help dev db-up db-down mocks proto fmt fmt-check build vet lint vuln test test-race \
         test-coverage coverage-html coverage-check test-integration check clean
 
 help: ## Show available targets
@@ -56,6 +57,9 @@ vet: ## Run go vet, including integration test files
 
 lint: ## Run golangci-lint (includes architecture rules via depguard and integration test files)
 	$(GOLANGCI) run --build-tags=integration ./...
+
+vuln: ## Report known vulnerabilities that the code actually reaches (govulncheck)
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 test: ## Run unit tests
 	$(GO) test ./...
