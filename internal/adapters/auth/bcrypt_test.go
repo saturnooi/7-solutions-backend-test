@@ -53,6 +53,51 @@ func TestBcryptHasher_Hash(t *testing.T) {
 	}
 }
 
+func TestBcryptHasher_Compare(t *testing.T) {
+	t.Parallel()
+
+	hasher := NewBcryptHasher(bcrypt.MinCost)
+	password72 := strings.Repeat("a", 72)
+	hash, err := hasher.Hash("correct horse")
+	if err != nil {
+		t.Fatalf("Hash() error = %v", err)
+	}
+	hash72, err := hasher.Hash(password72)
+	if err != nil {
+		t.Fatalf("Hash() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		hash     string
+		password string
+		want     bool
+		wantErr  bool
+	}{
+		{name: "matching password", hash: hash, password: "correct horse", want: true},
+		{name: "wrong password", hash: hash, password: "correct horsE"},
+		{name: "empty password", hash: hash, password: ""},
+		{name: "72-byte password", hash: hash72, password: password72, want: true},
+		{name: "72-byte password with extra bytes", hash: hash72, password: password72 + "x"},
+		{name: "malformed hash", hash: "not-a-bcrypt-hash", password: "correct horse", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := hasher.Compare(tt.hash, tt.password)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Compare() error = %v, want error %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("Compare() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBcryptHasher_Hash_SaltsEveryHash(t *testing.T) {
 	t.Parallel()
 
