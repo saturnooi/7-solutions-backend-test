@@ -13,6 +13,7 @@ packages:
     interfaces:
       UserRepository: {}
       PasswordHasher: {}
+      TokenIssuer: {}
   user-management-api/internal/adapters/http:
     interfaces:
       UserService: {}

@@ -24,6 +24,9 @@ var _ UserRepository = &UserRepositoryMock{}
 //			CreateFunc: func(ctx context.Context, u user.User) (user.User, error) {
 //				panic("mock out the Create method")
 //			},
+//			FindByEmailFunc: func(ctx context.Context, email string) (user.User, error) {
+//				panic("mock out the FindByEmail method")
+//			},
 //		}
 //
 //		// use mockedUserRepository in code that requires UserRepository
@@ -34,6 +37,9 @@ type UserRepositoryMock struct {
 	// CreateFunc mocks the Create method.
 	CreateFunc func(ctx context.Context, u user.User) (user.User, error)
 
+	// FindByEmailFunc mocks the FindByEmail method.
+	FindByEmailFunc func(ctx context.Context, email string) (user.User, error)
+
 	// calls tracks calls to the methods.
 	calls struct {
 		// Create holds details about calls to the Create method.
@@ -43,8 +49,16 @@ type UserRepositoryMock struct {
 			// U is the u argument value.
 			U user.User
 		}
+		// FindByEmail holds details about calls to the FindByEmail method.
+		FindByEmail []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Email is the email argument value.
+			Email string
+		}
 	}
-	lockCreate sync.RWMutex
+	lockCreate      sync.RWMutex
+	lockFindByEmail sync.RWMutex
 }
 
 // Create calls CreateFunc.
@@ -83,6 +97,42 @@ func (mock *UserRepositoryMock) CreateCalls() []struct {
 	return calls
 }
 
+// FindByEmail calls FindByEmailFunc.
+func (mock *UserRepositoryMock) FindByEmail(ctx context.Context, email string) (user.User, error) {
+	if mock.FindByEmailFunc == nil {
+		panic("UserRepositoryMock.FindByEmailFunc: method is nil but UserRepository.FindByEmail was just called")
+	}
+	callInfo := struct {
+		Ctx   context.Context
+		Email string
+	}{
+		Ctx:   ctx,
+		Email: email,
+	}
+	mock.lockFindByEmail.Lock()
+	mock.calls.FindByEmail = append(mock.calls.FindByEmail, callInfo)
+	mock.lockFindByEmail.Unlock()
+	return mock.FindByEmailFunc(ctx, email)
+}
+
+// FindByEmailCalls gets all the calls that were made to FindByEmail.
+// Check the length with:
+//
+//	len(mockedUserRepository.FindByEmailCalls())
+func (mock *UserRepositoryMock) FindByEmailCalls() []struct {
+	Ctx   context.Context
+	Email string
+} {
+	var calls []struct {
+		Ctx   context.Context
+		Email string
+	}
+	mock.lockFindByEmail.RLock()
+	calls = mock.calls.FindByEmail
+	mock.lockFindByEmail.RUnlock()
+	return calls
+}
+
 // Ensure that PasswordHasherMock does implement PasswordHasher.
 // If this is not the case, regenerate this file with mockery.
 var _ PasswordHasher = &PasswordHasherMock{}
@@ -93,6 +143,9 @@ var _ PasswordHasher = &PasswordHasherMock{}
 //
 //		// make and configure a mocked PasswordHasher
 //		mockedPasswordHasher := &PasswordHasherMock{
+//			CompareFunc: func(hash string, password string) (bool, error) {
+//				panic("mock out the Compare method")
+//			},
 //			HashFunc: func(password string) (string, error) {
 //				panic("mock out the Hash method")
 //			},
@@ -103,18 +156,65 @@ var _ PasswordHasher = &PasswordHasherMock{}
 //
 //	}
 type PasswordHasherMock struct {
+	// CompareFunc mocks the Compare method.
+	CompareFunc func(hash string, password string) (bool, error)
+
 	// HashFunc mocks the Hash method.
 	HashFunc func(password string) (string, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// Compare holds details about calls to the Compare method.
+		Compare []struct {
+			// Hash is the hash argument value.
+			Hash string
+			// Password is the password argument value.
+			Password string
+		}
 		// Hash holds details about calls to the Hash method.
 		Hash []struct {
 			// Password is the password argument value.
 			Password string
 		}
 	}
-	lockHash sync.RWMutex
+	lockCompare sync.RWMutex
+	lockHash    sync.RWMutex
+}
+
+// Compare calls CompareFunc.
+func (mock *PasswordHasherMock) Compare(hash string, password string) (bool, error) {
+	if mock.CompareFunc == nil {
+		panic("PasswordHasherMock.CompareFunc: method is nil but PasswordHasher.Compare was just called")
+	}
+	callInfo := struct {
+		Hash     string
+		Password string
+	}{
+		Hash:     hash,
+		Password: password,
+	}
+	mock.lockCompare.Lock()
+	mock.calls.Compare = append(mock.calls.Compare, callInfo)
+	mock.lockCompare.Unlock()
+	return mock.CompareFunc(hash, password)
+}
+
+// CompareCalls gets all the calls that were made to Compare.
+// Check the length with:
+//
+//	len(mockedPasswordHasher.CompareCalls())
+func (mock *PasswordHasherMock) CompareCalls() []struct {
+	Hash     string
+	Password string
+} {
+	var calls []struct {
+		Hash     string
+		Password string
+	}
+	mock.lockCompare.RLock()
+	calls = mock.calls.Compare
+	mock.lockCompare.RUnlock()
+	return calls
 }
 
 // Hash calls HashFunc.
@@ -146,5 +246,71 @@ func (mock *PasswordHasherMock) HashCalls() []struct {
 	mock.lockHash.RLock()
 	calls = mock.calls.Hash
 	mock.lockHash.RUnlock()
+	return calls
+}
+
+// Ensure that TokenIssuerMock does implement TokenIssuer.
+// If this is not the case, regenerate this file with mockery.
+var _ TokenIssuer = &TokenIssuerMock{}
+
+// TokenIssuerMock is a mock implementation of TokenIssuer.
+//
+//	func TestSomethingThatUsesTokenIssuer(t *testing.T) {
+//
+//		// make and configure a mocked TokenIssuer
+//		mockedTokenIssuer := &TokenIssuerMock{
+//			IssueFunc: func(subject string) (AccessToken, error) {
+//				panic("mock out the Issue method")
+//			},
+//		}
+//
+//		// use mockedTokenIssuer in code that requires TokenIssuer
+//		// and then make assertions.
+//
+//	}
+type TokenIssuerMock struct {
+	// IssueFunc mocks the Issue method.
+	IssueFunc func(subject string) (AccessToken, error)
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// Issue holds details about calls to the Issue method.
+		Issue []struct {
+			// Subject is the subject argument value.
+			Subject string
+		}
+	}
+	lockIssue sync.RWMutex
+}
+
+// Issue calls IssueFunc.
+func (mock *TokenIssuerMock) Issue(subject string) (AccessToken, error) {
+	if mock.IssueFunc == nil {
+		panic("TokenIssuerMock.IssueFunc: method is nil but TokenIssuer.Issue was just called")
+	}
+	callInfo := struct {
+		Subject string
+	}{
+		Subject: subject,
+	}
+	mock.lockIssue.Lock()
+	mock.calls.Issue = append(mock.calls.Issue, callInfo)
+	mock.lockIssue.Unlock()
+	return mock.IssueFunc(subject)
+}
+
+// IssueCalls gets all the calls that were made to Issue.
+// Check the length with:
+//
+//	len(mockedTokenIssuer.IssueCalls())
+func (mock *TokenIssuerMock) IssueCalls() []struct {
+	Subject string
+} {
+	var calls []struct {
+		Subject string
+	}
+	mock.lockIssue.RLock()
+	calls = mock.calls.Issue
+	mock.lockIssue.RUnlock()
 	return calls
 }

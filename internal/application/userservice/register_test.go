@@ -97,7 +97,7 @@ func TestService_Register(t *testing.T) {
 
 			hasher := &PasswordHasherMock{HashFunc: tt.hash}
 			repo := &UserRepositoryMock{CreateFunc: tt.create}
-			service := New(repo, hasher, func() time.Time { return now })
+			service := New(repo, hasher, &TokenIssuerMock{}, func() time.Time { return now })
 			ctx := context.WithValue(t.Context(), ctxKey{}, "request-1")
 
 			got, err := service.Register(ctx, tt.input)
@@ -153,7 +153,7 @@ func TestService_Register_RejectsEmptyHashFromHasher(t *testing.T) {
 
 	hasher := &PasswordHasherMock{HashFunc: func(string) (string, error) { return "", nil }}
 	repo := &UserRepositoryMock{}
-	service := New(repo, hasher, time.Now)
+	service := New(repo, hasher, &TokenIssuerMock{}, time.Now)
 
 	got, err := service.Register(t.Context(), RegisterInput{Name: "Alice", Email: "alice@example.com", Password: "correct horse"})
 

@@ -9,10 +9,12 @@ import (
 
 type UserRepository interface {
 	Create(ctx context.Context, u user.User) (user.User, error)
+	FindByEmail(ctx context.Context, email string) (user.User, error)
 }
 
 type PasswordHasher interface {
 	Hash(password string) (string, error)
+	Compare(hash, password string) (bool, error)
 }
 
 type AccessToken struct {

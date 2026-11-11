@@ -59,7 +59,11 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	service := userservice.New(users, auth.NewBcryptHasher(cfg.BcryptCost), time.Now)
+	tokens, err := auth.NewJWTService([]byte(cfg.JWTSecret), cfg.JWTIssuer, cfg.JWTTTL, time.Now)
+	if err != nil {
+		return err
+	}
+	service := userservice.New(users, auth.NewBcryptHasher(cfg.BcryptCost), tokens, time.Now)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           httpadapter.NewHandler(service, logger).Routes(),
