@@ -14,7 +14,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 3 | Login and JWT issuing: `POST /api/v1/auth/login`, HS256 access tokens | Done |
 | 4 | JWT middleware and the protected `POST /api/v1/users` | Done |
 | 5 | Get user by ID: `GET /api/v1/users/{id}` | Done |
-| 6 | List users | Planned |
+| 6 | List users: `GET /api/v1/users` with limit/offset pagination | Done |
 | 7 | Update user | Planned |
 | 8 | Delete user | Planned |
 | 9 | HTTP logging middleware | Planned |
@@ -68,6 +68,11 @@ GET /api/v1/users/{id}
   → adapters/http            requireAuth, then read {id} from the path
   → application/userservice  GetUser
       └─ UserRepository port → adapters/repository/mongodb (parse the ObjectID, then FindOne)
+
+GET /api/v1/users?limit=&offset=
+  → adapters/http            requireAuth, then parse limit and offset as integers (default limit 20)
+  → application/userservice  ListUsers: check 1 ≤ limit ≤ 100 and offset ≥ 0
+      └─ UserRepository port → adapters/repository/mongodb (Find sorted by the created_at_desc index)
 ```
 
 ## User rules
@@ -294,6 +299,50 @@ Response `400 Bad Request` when the ID is not a MongoDB ObjectID:
 | 404 | `user_not_found` | No user has this ID |
 | 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
 
+### GET /api/v1/users
+
+Auth: `Authorization: Bearer <access_token>`
+
+Lists users, newest first. Users created in the same millisecond are ordered by ID, so pages never overlap or skip anyone because of a tie.
+
+| Query parameter | Default | Allowed |
+|---|---|---|
+| `limit` | `20` | 1 to 100 |
+| `offset` | `0` | 0 or more |
+
+Request:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/users?limit=2&offset=1'
+```
+
+Response `200 OK`:
+
+```json
+{"users":[{"id":"6af40496bc5a249ffce49e01","name":"Bob Jones","email":"bob@example.com","created_at":"2026-11-11T06:00:54.888Z"},{"id":"6af40496bc5a249ffce49e00","name":"Alice Smith","email":"alice@example.com","created_at":"2026-11-11T06:00:54.657Z"}],"limit":2,"offset":1}
+```
+
+A page past the end is an empty array, never `null`:
+
+```json
+{"users":[],"limit":20,"offset":10}
+```
+
+A client has reached the end when a page holds fewer than `limit` users.
+
+Response `400 Bad Request` for values outside the allowed range:
+
+```json
+{"error":{"code":"validation_failed","message":"request validation failed","fields":[{"field":"limit","message":"must be between 1 and 100"},{"field":"offset","message":"must not be negative"}]}}
+```
+
+| Status | Code | When |
+|---|---|---|
+| 200 | | A page of users, possibly empty |
+| 400 | `validation_failed` | `limit` or `offset` is not an integer or is out of range |
+| 401 | `unauthorized` | Token missing or rejected |
+| 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
+
 ## JWT
 
 Login returns an access token signed with HMAC-SHA256 (HS256) using `JWT_SECRET`. Decoded, the token from the example above is:
@@ -440,6 +489,9 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Missing internal values are not validation errors.** The password hash and creation time come from the application layer, not the client. When one is missing, `New` returns a plain error, so it surfaces as an internal error instead of being blamed on the client's input.
 - **Creation time is stored in UTC at millisecond precision.** That is the precision MongoDB keeps, so a stored user reads back exactly as it was created.
 - **User IDs are opaque strings in the domain.** The repository generates ObjectIDs when it stores a user, and only the MongoDB adapter knows that type.
+- **The page-size cap lives in the use case.** HTTP only turns the query string into integers. The default of 20 and the rule 1 ≤ `limit` ≤ 100 are in `ListUsers`, because the cap protects the database no matter which adapter calls it.
+- **Listing is backed by an index.** `EnsureIndexes` creates `created_at_desc` on `{created_at: -1, _id: -1}`, which matches the sort exactly. `explain()` on a real run shows an `IXSCAN` on that index, so MongoDB never sorts in memory as the collection grows.
+- **Offset pagination over cursors.** `limit` and `offset` are simple to use and to test, and enough for an admin-style list. See Known limitations for the trade-off.
 - **The ID format is checked in the repository adapter, before any query.** Only the MongoDB adapter knows IDs are ObjectIDs, so it parses the ID and returns `ErrInvalidID` without touching the database. The integration tests prove this: a malformed ID returns `ErrInvalidID` even when the context is already cancelled. HTTP maps it to `400 invalid_id`, and a well-formed ID that matches nothing to `404 user_not_found`, so a client can tell a typo from a missing user.
 
 ## Known limitations
@@ -449,5 +501,6 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - A duplicate registration is detected only after the password is hashed, so it still costs one bcrypt round.
 - There are no refresh tokens and no way to revoke a token before it expires. Keep `JWT_TTL` short.
 - Authentication is all-or-nothing: there are no roles, so any logged-in user may create users and read any user.
+- The user list has no total count. With offset pagination, a user created while a client is paging shifts later pages by one, so a client can see the same user twice. Large offsets also get slower, because MongoDB still walks the skipped entries. Cursor (keyset) pagination on `(created_at, _id)` would fix both.
 - Login has no rate limiting or lockout, so password guessing is limited only by bcrypt's cost.
 - The dummy hash for unknown-email logins is computed on the first such request after startup, so that one request takes about twice as long.
