@@ -13,6 +13,7 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id string) (user.User, error)
 	List(ctx context.Context, limit, offset int) ([]user.User, error)
 	Update(ctx context.Context, id string, changes user.Changes) (user.User, error)
+	Delete(ctx context.Context, id string) error
 }
 
 type UserFinder interface {

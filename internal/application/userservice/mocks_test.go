@@ -24,6 +24,9 @@ var _ UserRepository = &UserRepositoryMock{}
 //			CreateFunc: func(ctx context.Context, u user.User) (user.User, error) {
 //				panic("mock out the Create method")
 //			},
+//			DeleteFunc: func(ctx context.Context, id string) error {
+//				panic("mock out the Delete method")
+//			},
 //			FindByEmailFunc: func(ctx context.Context, email string) (user.User, error) {
 //				panic("mock out the FindByEmail method")
 //			},
@@ -46,6 +49,9 @@ type UserRepositoryMock struct {
 	// CreateFunc mocks the Create method.
 	CreateFunc func(ctx context.Context, u user.User) (user.User, error)
 
+	// DeleteFunc mocks the Delete method.
+	DeleteFunc func(ctx context.Context, id string) error
+
 	// FindByEmailFunc mocks the FindByEmail method.
 	FindByEmailFunc func(ctx context.Context, email string) (user.User, error)
 
@@ -66,6 +72,13 @@ type UserRepositoryMock struct {
 			Ctx context.Context
 			// U is the u argument value.
 			U user.User
+		}
+		// Delete holds details about calls to the Delete method.
+		Delete []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ID is the id argument value.
+			ID string
 		}
 		// FindByEmail holds details about calls to the FindByEmail method.
 		FindByEmail []struct {
@@ -101,6 +114,7 @@ type UserRepositoryMock struct {
 		}
 	}
 	lockCreate      sync.RWMutex
+	lockDelete      sync.RWMutex
 	lockFindByEmail sync.RWMutex
 	lockFindByID    sync.RWMutex
 	lockList        sync.RWMutex
@@ -140,6 +154,42 @@ func (mock *UserRepositoryMock) CreateCalls() []struct {
 	mock.lockCreate.RLock()
 	calls = mock.calls.Create
 	mock.lockCreate.RUnlock()
+	return calls
+}
+
+// Delete calls DeleteFunc.
+func (mock *UserRepositoryMock) Delete(ctx context.Context, id string) error {
+	if mock.DeleteFunc == nil {
+		panic("UserRepositoryMock.DeleteFunc: method is nil but UserRepository.Delete was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		ID  string
+	}{
+		Ctx: ctx,
+		ID:  id,
+	}
+	mock.lockDelete.Lock()
+	mock.calls.Delete = append(mock.calls.Delete, callInfo)
+	mock.lockDelete.Unlock()
+	return mock.DeleteFunc(ctx, id)
+}
+
+// DeleteCalls gets all the calls that were made to Delete.
+// Check the length with:
+//
+//	len(mockedUserRepository.DeleteCalls())
+func (mock *UserRepositoryMock) DeleteCalls() []struct {
+	Ctx context.Context
+	ID  string
+} {
+	var calls []struct {
+		Ctx context.Context
+		ID  string
+	}
+	mock.lockDelete.RLock()
+	calls = mock.calls.Delete
+	mock.lockDelete.RUnlock()
 	return calls
 }
 
