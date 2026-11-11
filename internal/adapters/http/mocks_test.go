@@ -12,6 +12,72 @@ import (
 	"user-management-api/internal/domain/user"
 )
 
+// Ensure that TokenVerifierMock does implement TokenVerifier.
+// If this is not the case, regenerate this file with mockery.
+var _ TokenVerifier = &TokenVerifierMock{}
+
+// TokenVerifierMock is a mock implementation of TokenVerifier.
+//
+//	func TestSomethingThatUsesTokenVerifier(t *testing.T) {
+//
+//		// make and configure a mocked TokenVerifier
+//		mockedTokenVerifier := &TokenVerifierMock{
+//			VerifyFunc: func(token string) (string, error) {
+//				panic("mock out the Verify method")
+//			},
+//		}
+//
+//		// use mockedTokenVerifier in code that requires TokenVerifier
+//		// and then make assertions.
+//
+//	}
+type TokenVerifierMock struct {
+	// VerifyFunc mocks the Verify method.
+	VerifyFunc func(token string) (string, error)
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// Verify holds details about calls to the Verify method.
+		Verify []struct {
+			// Token is the token argument value.
+			Token string
+		}
+	}
+	lockVerify sync.RWMutex
+}
+
+// Verify calls VerifyFunc.
+func (mock *TokenVerifierMock) Verify(token string) (string, error) {
+	if mock.VerifyFunc == nil {
+		panic("TokenVerifierMock.VerifyFunc: method is nil but TokenVerifier.Verify was just called")
+	}
+	callInfo := struct {
+		Token string
+	}{
+		Token: token,
+	}
+	mock.lockVerify.Lock()
+	mock.calls.Verify = append(mock.calls.Verify, callInfo)
+	mock.lockVerify.Unlock()
+	return mock.VerifyFunc(token)
+}
+
+// VerifyCalls gets all the calls that were made to Verify.
+// Check the length with:
+//
+//	len(mockedTokenVerifier.VerifyCalls())
+func (mock *TokenVerifierMock) VerifyCalls() []struct {
+	Token string
+} {
+	var calls []struct {
+		Token string
+	}
+	mock.lockVerify.RLock()
+	calls = mock.calls.Verify
+	mock.lockVerify.RUnlock()
+	return calls
+}
+
 // Ensure that UserServiceMock does implement UserService.
 // If this is not the case, regenerate this file with mockery.
 var _ UserService = &UserServiceMock{}

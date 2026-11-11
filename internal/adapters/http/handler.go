@@ -16,16 +16,18 @@ type UserService interface {
 
 type Handler struct {
 	users  UserService
+	tokens TokenVerifier
 	logger *slog.Logger
 }
 
-func NewHandler(users UserService, logger *slog.Logger) *Handler {
-	return &Handler{users: users, logger: logger}
+func NewHandler(users UserService, tokens TokenVerifier, logger *slog.Logger) *Handler {
+	return &Handler{users: users, tokens: tokens, logger: logger}
 }
 
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/auth/register", h.register)
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
+	mux.Handle("POST /api/v1/users", h.requireAuth(http.HandlerFunc(h.register)))
 	return mux
 }
