@@ -14,6 +14,7 @@ type UserRepository interface {
 	List(ctx context.Context, limit, offset int) ([]user.User, error)
 	Update(ctx context.Context, id string, changes user.Changes) (user.User, error)
 	Delete(ctx context.Context, id string) error
+	Count(ctx context.Context) (int64, error)
 }
 
 type UserFinder interface {

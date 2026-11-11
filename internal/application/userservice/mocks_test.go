@@ -21,6 +21,9 @@ var _ UserRepository = &UserRepositoryMock{}
 //
 //		// make and configure a mocked UserRepository
 //		mockedUserRepository := &UserRepositoryMock{
+//			CountFunc: func(ctx context.Context) (int64, error) {
+//				panic("mock out the Count method")
+//			},
 //			CreateFunc: func(ctx context.Context, u user.User) (user.User, error) {
 //				panic("mock out the Create method")
 //			},
@@ -46,6 +49,9 @@ var _ UserRepository = &UserRepositoryMock{}
 //
 //	}
 type UserRepositoryMock struct {
+	// CountFunc mocks the Count method.
+	CountFunc func(ctx context.Context) (int64, error)
+
 	// CreateFunc mocks the Create method.
 	CreateFunc func(ctx context.Context, u user.User) (user.User, error)
 
@@ -66,6 +72,11 @@ type UserRepositoryMock struct {
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// Count holds details about calls to the Count method.
+		Count []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+		}
 		// Create holds details about calls to the Create method.
 		Create []struct {
 			// Ctx is the ctx argument value.
@@ -113,12 +124,45 @@ type UserRepositoryMock struct {
 			Changes user.Changes
 		}
 	}
+	lockCount       sync.RWMutex
 	lockCreate      sync.RWMutex
 	lockDelete      sync.RWMutex
 	lockFindByEmail sync.RWMutex
 	lockFindByID    sync.RWMutex
 	lockList        sync.RWMutex
 	lockUpdate      sync.RWMutex
+}
+
+// Count calls CountFunc.
+func (mock *UserRepositoryMock) Count(ctx context.Context) (int64, error) {
+	if mock.CountFunc == nil {
+		panic("UserRepositoryMock.CountFunc: method is nil but UserRepository.Count was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
+	mock.lockCount.Lock()
+	mock.calls.Count = append(mock.calls.Count, callInfo)
+	mock.lockCount.Unlock()
+	return mock.CountFunc(ctx)
+}
+
+// CountCalls gets all the calls that were made to Count.
+// Check the length with:
+//
+//	len(mockedUserRepository.CountCalls())
+func (mock *UserRepositoryMock) CountCalls() []struct {
+	Ctx context.Context
+} {
+	var calls []struct {
+		Ctx context.Context
+	}
+	mock.lockCount.RLock()
+	calls = mock.calls.Count
+	mock.lockCount.RUnlock()
+	return calls
 }
 
 // Create calls CreateFunc.
