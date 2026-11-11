@@ -116,6 +116,21 @@ func (r *UserRepository) Update(ctx context.Context, id string, changes user.Cha
 	return doc.toDomain(), nil
 }
 
+func (r *UserRepository) Delete(ctx context.Context, id string) error {
+	oid, err := parseID("delete user", id)
+	if err != nil {
+		return err
+	}
+	result, err := r.users.DeleteOne(ctx, bson.D{{Key: "_id", Value: oid}})
+	if err != nil {
+		return fmt.Errorf("mongodb: delete user: %w", err)
+	}
+	if result.DeletedCount == 0 {
+		return fmt.Errorf("mongodb: delete user: %w", user.ErrNotFound)
+	}
+	return nil
+}
+
 func parseID(operation, id string) (bson.ObjectID, error) {
 	oid, err := bson.ObjectIDFromHex(id)
 	if err != nil {
