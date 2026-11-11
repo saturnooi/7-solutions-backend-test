@@ -12,7 +12,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 1 | User domain: entity, validation rules, domain errors | Done |
 | 2 | User registration: use case, MongoDB repository, bcrypt, `POST /api/v1/auth/register` | Done |
 | 3 | Login and JWT issuing: `POST /api/v1/auth/login`, HS256 access tokens | Done |
-| 4 | JWT middleware | Planned |
+| 4 | JWT middleware and the protected `POST /api/v1/users` | Done |
 | 5 | Get user by ID | Planned |
 | 6 | List users | Planned |
 | 7 | Update user | Planned |
@@ -58,6 +58,11 @@ POST /api/v1/auth/login
       ├─ UserRepository port → adapters/repository/mongodb (FindByEmail)
       ├─ PasswordHasher port → adapters/auth (bcrypt)
       └─ TokenIssuer port    → adapters/auth (JWT HS256)
+
+POST /api/v1/users
+  → adapters/http            requireAuth: read the bearer token, verify it, put the user ID in the request context
+      └─ TokenVerifier       → adapters/auth (JWT HS256)
+  → the same Register use case as /api/v1/auth/register
 ```
 
 ## User rules
@@ -93,7 +98,7 @@ Error messages name the field and the rule, never the submitted value, for examp
 │   │   └── userservice/       # use cases and the ports they need
 │   ├── adapters/
 │   │   ├── auth/              # bcrypt password hasher, JWT issuer
-│   │   ├── http/              # REST handlers, DTOs, error mapping
+│   │   ├── http/              # REST handlers, DTOs, error mapping, JWT middleware
 │   │   └── repository/
 │   │       └── mongodb/       # UserRepository on MongoDB
 │   └── infrastructure/
@@ -223,6 +228,29 @@ Response `401 Unauthorized` for an unknown email or a wrong password. Both get t
 | 413 | `request_too_large` | Body larger than 1 MiB |
 | 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
 
+### POST /api/v1/users
+
+Auth: `Authorization: Bearer <access_token>`
+
+Creates a user on behalf of an authenticated caller. The body, rules and responses are the same as for [registration](#post-apiv1authregister); only the token requirement differs. Any authenticated user may call it.
+
+Request:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Bob Jones","email":"bob@example.com","password":"correct horse"}'
+```
+
+Response `201 Created`:
+
+```json
+{"id":"6af400dac46deb7de7f3b26f","name":"Bob Jones","email":"bob@example.com","created_at":"2026-11-11T05:44:58.345Z"}
+```
+
+Response `401 Unauthorized` when the token is missing or rejected (see [Using the token](#using-the-token)).
+
 ## JWT
 
 Login returns an access token signed with HMAC-SHA256 (HS256) using `JWT_SECRET`. Decoded, the token from the example above is:
@@ -239,7 +267,41 @@ Login returns an access token signed with HMAC-SHA256 (HS256) using `JWT_SECRET`
 | `iat` | When the token was issued (Unix seconds) |
 | `exp` | When the token expires: `iat` plus `JWT_TTL` |
 
-`expires_in` in the login response is the token lifetime in seconds. There are no refresh tokens, so a client logs in again after the token expires. No endpoint requires the token yet; the JWT middleware that validates it is Phase 4.
+`expires_in` in the login response is the token lifetime in seconds. There are no refresh tokens, so a client logs in again after the token expires.
+
+### Using the token
+
+1. Register: `POST /api/v1/auth/register`.
+2. Log in: `POST /api/v1/auth/login`, and keep `access_token`.
+3. Send it with every protected request. The example uses [jq](https://jqlang.org/) to extract the token:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"correct horse"}' | jq -r .access_token)
+
+curl -H "Authorization: Bearer $TOKEN" ...
+```
+
+The scheme name is case-insensitive (`Bearer` or `bearer`). A token is accepted only if all of these hold:
+
+| Check | Rejected example |
+|---|---|
+| Signed with HS256 and `JWT_SECRET` | `alg: none`, HS512, another secret, or a payload edited after signing |
+| `exp` is present and in the future | Expired, or no `exp` claim |
+| `iat` is not in the future | Issued by a clock that runs ahead |
+| `iss` equals `JWT_ISSUER` | Token from another issuer |
+| `sub` is not empty | Token without a subject |
+
+`exp` and `iat` allow 5 seconds of clock difference between servers.
+
+Every rejection returns the same `401` body, so a client cannot learn why a token failed:
+
+```json
+{"error":{"code":"unauthorized","message":"a valid bearer token is required"}}
+```
+
+The `WWW-Authenticate` header follows RFC 6750: `Bearer` when no token was sent, and `Bearer error="invalid_token"` when a token was sent but rejected. On success, the middleware stores the token's `sub` (the user ID) in the request context for the handler.
 
 ## Development commands
 
@@ -271,6 +333,7 @@ Tests use the standard `testing` package. Table-driven tests are the default sty
 | Domain | Real values only. The domain has no dependencies. |
 | Application | Ports replaced by generated mocks |
 | HTTP | `httptest` through the real router, with the use case replaced by a generated mock. Bodies are compared exactly, so a leaked field fails the test. |
+| JWT middleware | Header parsing with a mocked verifier, and end-to-end with the real JWT service: a valid, an expired, and a foreign-secret token |
 | bcrypt hasher, JWT issuer, config | Real implementations. Issued tokens are parsed back and their claims checked. |
 | MongoDB repository | Integration tests against a real MongoDB. Each test uses its own database and drops it afterwards. |
 
@@ -325,6 +388,10 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Passwords over 72 bytes never match.** bcrypt's `CompareHashAndPassword` reads only the first 72 bytes, so a user with a 72-byte password could otherwise log in with that password plus any suffix. The hasher's `Compare` rejects longer passwords before calling bcrypt.
 - **The JWT secret has no default.** `JWT_SECRET` must be set and at least 32 bytes long, and `.env.example` leaves it empty. The JWT adapter also refuses a shorter key itself, because golang-jwt signs with an empty key without complaint.
 - **Only HS256 is issued, with minimal claims.** Tokens carry `sub`, `iss`, `iat` and `exp`, and nothing personal such as the email, because a JWT payload is readable by anyone who holds the token.
+- **Token checks live in the JWT adapter, not in a use case.** Verifying a token is a transport concern. The middleware depends on a one-method `TokenVerifier` interface that the JWT adapter implements, the same way handlers depend on a small service interface. The gRPC interceptor will use the same `Verify`, so the rules exist once.
+- **The middleware lives in the HTTP adapter package.** A separate package would have to export or copy the JSON error helpers to return the same error shape.
+- **Rejections do not say why.** Missing, malformed, expired and forged tokens all get the same `401` body. Only the RFC 6750 `WWW-Authenticate` header separates "no token" from "bad token", which the client already knows.
+- **Clock leeway is 5 seconds.** That absorbs small clock differences between replicas without meaningfully extending a token's life.
 - **Token responses are not cached.** The login response sends `Cache-Control: no-store`, as RFC 6749 requires for token responses.
 - **Login validates presence only.** An empty email or password is a `400`. Any other mismatch, including a malformed email, is a `401`, so login does not reveal the validation rules of stored accounts.
 - **Missing internal values are not validation errors.** The password hash and creation time come from the application layer, not the client. When one is missing, `New` returns a plain error, so it surfaces as an internal error instead of being blamed on the client's input.
@@ -337,5 +404,6 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - Registration reveals whether an email is already registered (`409`). This comes with unique emails, and there is no rate limiting yet.
 - A duplicate registration is detected only after the password is hashed, so it still costs one bcrypt round.
 - There are no refresh tokens and no way to revoke a token before it expires. Keep `JWT_TTL` short.
+- Authentication is all-or-nothing: there are no roles, so any logged-in user may create users.
 - Login has no rate limiting or lockout, so password guessing is limited only by bcrypt's cost.
 - The dummy hash for unknown-email logins is computed on the first such request after startup, so that one request takes about twice as long.
