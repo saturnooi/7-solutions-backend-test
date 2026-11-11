@@ -359,6 +359,200 @@ func TestListUsers(t *testing.T) {
 	}
 }
 
+func TestUpdateUser(t *testing.T) {
+	t.Parallel()
+
+	const updatedBody = `{"id":"6730f1c2a1b2c3d4e5f60718","name":"Alice Cooper","email":"alice@example.com","created_at":"2026-11-11T09:00:00Z"}`
+	ptr := func(s string) *string { return &s }
+	updated := user.User{
+		ID:           callerID,
+		Name:         "Alice Cooper",
+		Email:        "alice@example.com",
+		PasswordHash: "$2a$12$stored-hash-value",
+		CreatedAt:    time.Date(2026, time.November, 11, 9, 0, 0, 0, time.UTC),
+	}
+	accept := func(string) (string, error) { return callerID, nil }
+	returns := func(u user.User, err error) func(context.Context, string, string, userservice.UpdateInput) (user.User, error) {
+		return func(context.Context, string, string, userservice.UpdateInput) (user.User, error) { return u, err }
+	}
+
+	tests := []struct {
+		name          string
+		target        string
+		body          string
+		authorization string
+		update        func(context.Context, string, string, userservice.UpdateInput) (user.User, error)
+		wantStatus    int
+		wantBody      string
+		wantInput     *userservice.UpdateInput
+		wantLog       string
+	}{
+		{
+			name:          "owner changes their name",
+			target:        callerID,
+			body:          `{"name":"Alice Cooper"}`,
+			authorization: "Bearer valid.token.signature",
+			update:        returns(updated, nil),
+			wantStatus:    http.StatusOK,
+			wantBody:      updatedBody,
+			wantInput:     &userservice.UpdateInput{Name: ptr("Alice Cooper")},
+		},
+		{
+			name:          "null leaves a field unchanged",
+			target:        callerID,
+			body:          `{"name":null,"email":"alice@example.com"}`,
+			authorization: "Bearer valid.token.signature",
+			update:        returns(updated, nil),
+			wantStatus:    http.StatusOK,
+			wantBody:      updatedBody,
+			wantInput:     &userservice.UpdateInput{Email: ptr("alice@example.com")},
+		},
+		{
+			name:          "another user's account",
+			target:        created.ID,
+			body:          `{"name":"Mallory"}`,
+			authorization: "Bearer valid.token.signature",
+			update:        returns(user.User{}, userservice.ErrForbidden),
+			wantStatus:    http.StatusForbidden,
+			wantBody:      `{"error":{"code":"forbidden","message":"you may only change your own account"}}`,
+			wantInput:     &userservice.UpdateInput{Name: ptr("Mallory")},
+		},
+		{
+			name:          "nothing to change",
+			target:        callerID,
+			body:          `{}`,
+			authorization: "Bearer valid.token.signature",
+			update:        returns(user.User{}, user.ErrNoChanges),
+			wantStatus:    http.StatusBadRequest,
+			wantBody:      `{"error":{"code":"empty_update","message":"request must change name or email"}}`,
+			wantInput:     &userservice.UpdateInput{},
+		},
+		{
+			name:          "invalid field",
+			target:        callerID,
+			body:          `{"email":"alice"}`,
+			authorization: "Bearer valid.token.signature",
+			update: returns(user.User{}, &user.ValidationError{Fields: []user.FieldError{
+				{Field: "email", Message: "must be a valid email address"},
+			}}),
+			wantStatus: http.StatusBadRequest,
+			wantBody:   `{"error":{"code":"validation_failed","message":"request validation failed","fields":[{"field":"email","message":"must be a valid email address"}]}}`,
+			wantInput:  &userservice.UpdateInput{Email: ptr("alice")},
+		},
+		{
+			name:          "email belongs to someone else",
+			target:        callerID,
+			body:          `{"email":"bob@example.com"}`,
+			authorization: "Bearer valid.token.signature",
+			update:        returns(user.User{}, fmt.Errorf("update user: %w", user.ErrEmailAlreadyExists)),
+			wantStatus:    http.StatusConflict,
+			wantBody:      `{"error":{"code":"email_already_exists","message":"email is already registered"}}`,
+			wantInput:     &userservice.UpdateInput{Email: ptr("bob@example.com")},
+		},
+		{
+			name:          "account no longer exists",
+			target:        callerID,
+			body:          `{"name":"Alice Cooper"}`,
+			authorization: "Bearer valid.token.signature",
+			update:        returns(user.User{}, fmt.Errorf("update user: %w", user.ErrNotFound)),
+			wantStatus:    http.StatusNotFound,
+			wantBody:      `{"error":{"code":"user_not_found","message":"user not found"}}`,
+			wantInput:     &userservice.UpdateInput{Name: ptr("Alice Cooper")},
+		},
+		{
+			name:          "password cannot be changed here",
+			target:        callerID,
+			body:          `{"password":"a new password"}`,
+			authorization: "Bearer valid.token.signature",
+			wantStatus:    http.StatusBadRequest,
+			wantBody:      `{"error":{"code":"invalid_json","message":"request body must be a single JSON object with only the documented fields"}}`,
+		},
+		{
+			name:          "internal error is hidden from the client and logged",
+			target:        callerID,
+			body:          `{"name":"Alice Cooper"}`,
+			authorization: "Bearer valid.token.signature",
+			update:        returns(user.User{}, errors.New("update user: mongodb: update user: write concern timeout")),
+			wantStatus:    http.StatusInternalServerError,
+			wantBody:      `{"error":{"code":"internal_error","message":"internal server error"}}`,
+			wantInput:     &userservice.UpdateInput{Name: ptr("Alice Cooper")},
+			wantLog:       "write concern timeout",
+		},
+		{
+			name:       "no token",
+			target:     callerID,
+			body:       `{"name":"Alice Cooper"}`,
+			wantStatus: http.StatusUnauthorized,
+			wantBody:   unauthorizedBody,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service := &UserServiceMock{UpdateUserFunc: tt.update}
+			var logs bytes.Buffer
+			router := NewHandler(service, &TokenVerifierMock{VerifyFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, usersPath+"/"+tt.target, strings.NewReader(tt.body))
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+			rec := httptest.NewRecorder()
+
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if got := strings.TrimSuffix(rec.Body.String(), "\n"); got != tt.wantBody {
+				t.Errorf("body = %s\nwant   %s", got, tt.wantBody)
+			}
+
+			calls := service.UpdateUserCalls()
+			if tt.wantInput == nil {
+				if len(calls) != 0 {
+					t.Errorf("UpdateUser calls = %d, want 0", len(calls))
+				}
+			} else {
+				if len(calls) != 1 {
+					t.Fatalf("UpdateUser calls = %d, want 1", len(calls))
+				}
+				if calls[0].CallerID != callerID || calls[0].ID != tt.target {
+					t.Errorf("UpdateUser received caller %q and id %q, want %q and %q", calls[0].CallerID, calls[0].ID, callerID, tt.target)
+				}
+				if !samePointee(calls[0].In.Name, tt.wantInput.Name) || !samePointee(calls[0].In.Email, tt.wantInput.Email) {
+					t.Errorf("UpdateUser received %s, want %s", showInput(calls[0].In), showInput(*tt.wantInput))
+				}
+			}
+
+			if tt.wantLog == "" && logs.Len() > 0 {
+				t.Errorf("unexpected log output: %s", logs.String())
+			}
+			if tt.wantLog != "" && !strings.Contains(logs.String(), tt.wantLog) {
+				t.Errorf("log = %s, want it to contain %q", logs.String(), tt.wantLog)
+			}
+		})
+	}
+}
+
+func samePointee(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func showInput(in userservice.UpdateInput) string {
+	show := func(p *string) string {
+		if p == nil {
+			return "<nil>"
+		}
+		return fmt.Sprintf("%q", *p)
+	}
+	return fmt.Sprintf("{Name: %s, Email: %s}", show(in.Name), show(in.Email))
+}
+
 func TestCreateUser_WithRealJWT(t *testing.T) {
 	t.Parallel()
 
