@@ -11,6 +11,7 @@ import (
 
 const (
 	defaultHTTPAddr      = ":8080"
+	defaultGRPCAddr      = ":9090"
 	defaultMongoDatabase = "user_management"
 	defaultBcryptCost    = 12
 	minBcryptCost        = bcrypt.DefaultCost
@@ -22,6 +23,7 @@ const (
 
 type Config struct {
 	HTTPAddr      string
+	GRPCAddr      string
 	MongoURI      string
 	MongoDatabase string
 	BcryptCost    int
@@ -33,6 +35,7 @@ type Config struct {
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
 		HTTPAddr:      valueOrDefault(getenv("HTTP_ADDR"), defaultHTTPAddr),
+		GRPCAddr:      valueOrDefault(getenv("GRPC_ADDR"), defaultGRPCAddr),
 		MongoURI:      getenv("MONGO_URI"),
 		MongoDatabase: valueOrDefault(getenv("MONGO_DATABASE"), defaultMongoDatabase),
 		BcryptCost:    defaultBcryptCost,

@@ -19,6 +19,7 @@ func TestLoad(t *testing.T) {
 	}
 	defaults := Config{
 		HTTPAddr:      ":8080",
+		GRPCAddr:      ":9090",
 		MongoURI:      "mongodb://localhost:27017",
 		MongoDatabase: "user_management",
 		BcryptCost:    12,
@@ -47,6 +48,7 @@ func TestLoad(t *testing.T) {
 			name: "every variable set",
 			env: map[string]string{
 				"HTTP_ADDR":      "127.0.0.1:9000",
+				"GRPC_ADDR":      "127.0.0.1:9001",
 				"MONGO_URI":      "mongodb://mongo:27017",
 				"MONGO_DATABASE": "users_prod",
 				"BCRYPT_COST":    "14",
@@ -56,6 +58,7 @@ func TestLoad(t *testing.T) {
 			},
 			want: Config{
 				HTTPAddr:      "127.0.0.1:9000",
+				GRPCAddr:      "127.0.0.1:9001",
 				MongoURI:      "mongodb://mongo:27017",
 				MongoDatabase: "users_prod",
 				BcryptCost:    14,
