@@ -17,7 +17,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 6 | List users: `GET /api/v1/users` with limit/offset pagination | Done |
 | 7 | Update user: `PATCH /api/v1/users/{id}`, own account only | Done |
 | 8 | Delete user: `DELETE /api/v1/users/{id}`, own account only; tokens of deleted users stop working | Done |
-| 9 | HTTP logging middleware | Planned |
+| 9 | HTTP logging middleware: method, path, status, duration | Done |
 | 10 | Background user-count worker | Planned |
 | 11 | gRPC (CreateUser, GetUser) | Planned |
 | 12 | Docker and Docker Compose | Planned |
@@ -124,7 +124,7 @@ Error messages name the field and the rule, never the submitted value, for examp
 │   │   └── userservice/       # use cases and the ports they need
 │   ├── adapters/
 │   │   ├── auth/              # bcrypt password hasher, JWT issuer
-│   │   ├── http/              # REST handlers, DTOs, error mapping, JWT middleware
+│   │   ├── http/              # REST handlers, DTOs, error mapping, auth and logging middleware
 │   │   └── repository/
 │   │       └── mongodb/       # UserRepository on MongoDB
 │   └── infrastructure/
@@ -493,6 +493,28 @@ Every rejection returns the same `401` body, so a client cannot learn why a toke
 
 The `WWW-Authenticate` header follows RFC 6750: `Bearer` when no token was sent, and `Bearer error="invalid_token"` when a token was sent but rejected. If the user lookup itself fails, for example while MongoDB is unreachable, the response is `500 internal_error` rather than `401`, so an outage does not look like every client being logged out. On success, the middleware stores the token's `sub` (the user ID) in the request context for the handler.
 
+## Logging
+
+The API writes JSON lines to standard output with `log/slog`. A middleware around the whole router logs every request once, after the response, including `401`, `404` and `405` responses. Lines from a real run:
+
+```json
+{"time":"2026-11-11T13:55:29.938724+07:00","level":"INFO","msg":"http request","method":"POST","path":"/api/v1/auth/register","status":201,"duration_ms":228.198}
+{"time":"2026-11-11T13:55:30.287096+07:00","level":"INFO","msg":"http request","method":"GET","path":"/api/v1/users","status":200,"duration_ms":8.406}
+{"time":"2026-11-11T13:55:30.297641+07:00","level":"INFO","msg":"http request","method":"GET","path":"/api/v1/users","status":401,"duration_ms":0.068}
+{"time":"2026-11-11T13:55:30.321244+07:00","level":"INFO","msg":"http request","method":"GET","path":"/nowhere","status":404,"duration_ms":0.01}
+```
+
+| Field | Meaning |
+|---|---|
+| `method` | HTTP method |
+| `path` | URL path only, without the query string |
+| `status` | Status code sent to the client. It is `200` when a handler writes a body without setting one, as `net/http` does. |
+| `duration_ms` | Time from receiving the request to finishing the response, in milliseconds |
+
+Request logs never include headers (so never the `Authorization` token), request or response bodies (so never passwords or emails), or the query string. The second line above came from `GET /api/v1/users?limit=5&offset=0` with a bearer token, and neither appears in it.
+
+When a request fails with `500`, a separate `ERROR` line named `request failed` records the real cause. The client only ever sees `internal_error`.
+
 ## Development commands
 
 | Command | What it does |
@@ -523,6 +545,7 @@ Tests use the standard `testing` package. Table-driven tests are the default sty
 | Domain | Real values only. The domain has no dependencies. |
 | Application | Ports replaced by generated mocks |
 | HTTP | `httptest` through the real router, with the use case replaced by a generated mock. Bodies are compared exactly, so a leaked field fails the test. |
+| Logging middleware | Status capture with small stub handlers, the full router for wiring, and `testing/synctest` for the duration: a handler that sleeps 150 ms on the fake clock must log exactly `150`, with no real waiting |
 | Authentication | The `Authenticator` use case with mocked ports; header parsing with a mocked `Authenticator`; and end-to-end with the real JWT service and `Authenticator`: a valid token, an expired one, a foreign-secret one, and a valid token whose user was deleted |
 | bcrypt hasher, JWT issuer, config | Real implementations. Issued tokens are parsed back and their claims checked. |
 | MongoDB repository | Integration tests against a real MongoDB. Each test uses its own database and drops it afterwards. |
@@ -578,6 +601,8 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Passwords over 72 bytes never match.** bcrypt's `CompareHashAndPassword` reads only the first 72 bytes, so a user with a 72-byte password could otherwise log in with that password plus any suffix. The hasher's `Compare` rejects longer passwords before calling bcrypt.
 - **The JWT secret has no default.** `JWT_SECRET` must be set and at least 32 bytes long, and `.env.example` leaves it empty. The JWT adapter also refuses a shorter key itself, because golang-jwt signs with an empty key without complaint.
 - **Only HS256 is issued, with minimal claims.** Tokens carry `sub`, `iss`, `iat` and `exp`, and nothing personal such as the email, because a JWT payload is readable by anyone who holds the token.
+- **Request logging wraps the whole router.** It sits outside routing and authentication, so it also records requests that never reach a handler: unknown paths, wrong methods, rejected tokens. Request lines are always `INFO`. The cause of a `500` is logged once at `ERROR` where it happens, not repeated by the request logger.
+- **The status recorder keeps the writer's other features.** The wrapper records the first status, or `200` once a body is written, matching what `net/http` sends. It implements `Unwrap`, so `http.ResponseController` can still reach the real writer (for example to flush).
 - **Authentication is a use case.** A token counts only while its user exists, which is a business rule, not just a JWT check. `userservice.Authenticator` verifies the token through the `TokenVerifier` port (the JWT adapter) and looks the user up through the narrow `UserFinder` port. The HTTP middleware calls it, and the gRPC interceptor will too, so the rule exists once. The JWT adapter still owns every signature and claim check.
 - **Deleting an account revokes its tokens immediately.** The existence check costs one `_id` lookup per protected request, which keeps tokens stateless while closing the window a deleted user would otherwise have until `exp`. A failed lookup is a `500`, never a `401`, so a database outage does not log everyone out.
 - **The middleware lives in the HTTP adapter package.** A separate package would have to export or copy the JSON error helpers to return the same error shape.
