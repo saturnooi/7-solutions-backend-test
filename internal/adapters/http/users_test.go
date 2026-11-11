@@ -555,6 +555,106 @@ func showInput(in userservice.UpdateInput) string {
 	return fmt.Sprintf("{Name: %s, Email: %s}", show(in.Name), show(in.Email))
 }
 
+func TestDeleteUser(t *testing.T) {
+	t.Parallel()
+
+	accept := func(context.Context, string) (string, error) { return callerID, nil }
+	returns := func(err error) func(context.Context, string, string) error {
+		return func(context.Context, string, string) error { return err }
+	}
+
+	tests := []struct {
+		name          string
+		target        string
+		authorization string
+		deleteUser    func(context.Context, string, string) error
+		wantStatus    int
+		wantBody      string
+		wantCall      bool
+		wantLog       string
+	}{
+		{
+			name:          "owner deletes their account",
+			target:        callerID,
+			authorization: "Bearer valid.token.signature",
+			deleteUser:    returns(nil),
+			wantStatus:    http.StatusNoContent,
+			wantCall:      true,
+		},
+		{
+			name:          "another user's account",
+			target:        created.ID,
+			authorization: "Bearer valid.token.signature",
+			deleteUser:    returns(userservice.ErrForbidden),
+			wantStatus:    http.StatusForbidden,
+			wantBody:      `{"error":{"code":"forbidden","message":"you may only change your own account"}}`,
+			wantCall:      true,
+		},
+		{
+			name:          "account already gone",
+			target:        callerID,
+			authorization: "Bearer valid.token.signature",
+			deleteUser:    returns(fmt.Errorf("delete user: %w", user.ErrNotFound)),
+			wantStatus:    http.StatusNotFound,
+			wantBody:      `{"error":{"code":"user_not_found","message":"user not found"}}`,
+			wantCall:      true,
+		},
+		{
+			name:          "internal error is hidden from the client and logged",
+			target:        callerID,
+			authorization: "Bearer valid.token.signature",
+			deleteUser:    returns(errors.New("delete user: mongodb: delete user: not primary")),
+			wantStatus:    http.StatusInternalServerError,
+			wantBody:      `{"error":{"code":"internal_error","message":"internal server error"}}`,
+			wantCall:      true,
+			wantLog:       "not primary",
+		},
+		{
+			name:       "no token",
+			target:     callerID,
+			wantStatus: http.StatusUnauthorized,
+			wantBody:   unauthorizedBody,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service := &UserServiceMock{DeleteUserFunc: tt.deleteUser}
+			var logs bytes.Buffer
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, usersPath+"/"+tt.target, nil)
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+			rec := httptest.NewRecorder()
+
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if got := strings.TrimSuffix(rec.Body.String(), "\n"); got != tt.wantBody {
+				t.Errorf("body = %q, want %q", got, tt.wantBody)
+			}
+			calls := service.DeleteUserCalls()
+			switch {
+			case !tt.wantCall && len(calls) != 0:
+				t.Errorf("DeleteUser calls = %d, want 0", len(calls))
+			case tt.wantCall && (len(calls) != 1 || calls[0].CallerID != callerID || calls[0].ID != tt.target):
+				t.Errorf("DeleteUser calls = %+v, want one call with caller %q and id %q", calls, callerID, tt.target)
+			}
+			if tt.wantLog == "" && logs.Len() > 0 {
+				t.Errorf("unexpected log output: %s", logs.String())
+			}
+			if tt.wantLog != "" && !strings.Contains(logs.String(), tt.wantLog) {
+				t.Errorf("log = %s, want it to contain %q", logs.String(), tt.wantLog)
+			}
+		})
+	}
+}
+
 type finderFunc func(ctx context.Context, id string) (user.User, error)
 
 func (f finderFunc) FindByID(ctx context.Context, id string) (user.User, error) { return f(ctx, id) }
