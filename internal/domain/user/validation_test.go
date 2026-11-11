@@ -111,6 +111,32 @@ func TestValidateNewUser_Password(t *testing.T) {
 	}
 }
 
+func TestNormalizeEmail(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "already normalized", input: "alice@example.com", want: "alice@example.com"},
+		{name: "mixed case with spaces", input: "  Alice@Example.COM \t", want: "alice@example.com"},
+		{name: "Thai address is unchanged", input: "อลิซ@ตัวอย่าง.ไทย", want: "อลิซ@ตัวอย่าง.ไทย"},
+		{name: "invalid input is only trimmed and lowercased", input: " Not An Email ", want: "not an email"},
+		{name: "empty", input: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := NormalizeEmail(tt.input); got != tt.want {
+				t.Errorf("NormalizeEmail(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateNewUser_ReportsEveryInvalidFieldInOrder(t *testing.T) {
 	t.Parallel()
 
