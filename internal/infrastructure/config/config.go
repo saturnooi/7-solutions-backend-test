@@ -34,7 +34,7 @@ type Config struct {
 
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		HTTPAddr:      valueOrDefault(getenv("HTTP_ADDR"), defaultHTTPAddr),
+		HTTPAddr:      HTTPAddr(getenv),
 		GRPCAddr:      valueOrDefault(getenv("GRPC_ADDR"), defaultGRPCAddr),
 		MongoURI:      getenv("MONGO_URI"),
 		MongoDatabase: valueOrDefault(getenv("MONGO_DATABASE"), defaultMongoDatabase),
@@ -72,6 +72,10 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
+}
+
+func HTTPAddr(getenv func(string) string) string {
+	return valueOrDefault(getenv("HTTP_ADDR"), defaultHTTPAddr)
 }
 
 func valueOrDefault(value, fallback string) string {
