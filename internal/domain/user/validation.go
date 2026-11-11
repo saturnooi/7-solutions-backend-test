@@ -38,8 +38,12 @@ func normalizeName(raw string) (name, problem string) {
 	return name, ""
 }
 
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 func normalizeEmail(raw string) (email, problem string) {
-	email = strings.ToLower(strings.TrimSpace(raw))
+	email = NormalizeEmail(raw)
 	switch {
 	case email == "":
 		return "", "is required"
