@@ -48,13 +48,17 @@ func (r *UserRepository) Create(ctx context.Context, u user.User) (user.User, er
 }
 
 func (r *UserRepository) FindByEmail(ctx context.Context, email string) (user.User, error) {
+	return r.findOne(ctx, "find user by email", bson.D{{Key: "email", Value: email}})
+}
+
+func (r *UserRepository) findOne(ctx context.Context, operation string, filter bson.D) (user.User, error) {
 	var doc userDocument
-	err := r.users.FindOne(ctx, bson.D{{Key: "email", Value: email}}).Decode(&doc)
+	err := r.users.FindOne(ctx, filter).Decode(&doc)
 	if errors.Is(err, mongo.ErrNoDocuments) {
-		return user.User{}, fmt.Errorf("mongodb: find user by email: %w", user.ErrNotFound)
+		return user.User{}, fmt.Errorf("mongodb: %s: %w", operation, user.ErrNotFound)
 	}
 	if err != nil {
-		return user.User{}, fmt.Errorf("mongodb: find user by email: %w", err)
+		return user.User{}, fmt.Errorf("mongodb: %s: %w", operation, err)
 	}
 	return doc.toDomain(), nil
 }
