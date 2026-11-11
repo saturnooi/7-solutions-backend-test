@@ -15,6 +15,10 @@ type UserRepository interface {
 	Update(ctx context.Context, id string, changes user.Changes) (user.User, error)
 }
 
+type UserFinder interface {
+	FindByID(ctx context.Context, id string) (user.User, error)
+}
+
 type PasswordHasher interface {
 	Hash(password string) (string, error)
 	Compare(hash, password string) (bool, error)
@@ -27,4 +31,8 @@ type AccessToken struct {
 
 type TokenIssuer interface {
 	Issue(subject string) (AccessToken, error)
+}
+
+type TokenVerifier interface {
+	Verify(token string) (string, error)
 }

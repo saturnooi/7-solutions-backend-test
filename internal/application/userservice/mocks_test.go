@@ -295,6 +295,78 @@ func (mock *UserRepositoryMock) UpdateCalls() []struct {
 	return calls
 }
 
+// Ensure that UserFinderMock does implement UserFinder.
+// If this is not the case, regenerate this file with mockery.
+var _ UserFinder = &UserFinderMock{}
+
+// UserFinderMock is a mock implementation of UserFinder.
+//
+//	func TestSomethingThatUsesUserFinder(t *testing.T) {
+//
+//		// make and configure a mocked UserFinder
+//		mockedUserFinder := &UserFinderMock{
+//			FindByIDFunc: func(ctx context.Context, id string) (user.User, error) {
+//				panic("mock out the FindByID method")
+//			},
+//		}
+//
+//		// use mockedUserFinder in code that requires UserFinder
+//		// and then make assertions.
+//
+//	}
+type UserFinderMock struct {
+	// FindByIDFunc mocks the FindByID method.
+	FindByIDFunc func(ctx context.Context, id string) (user.User, error)
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// FindByID holds details about calls to the FindByID method.
+		FindByID []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ID is the id argument value.
+			ID string
+		}
+	}
+	lockFindByID sync.RWMutex
+}
+
+// FindByID calls FindByIDFunc.
+func (mock *UserFinderMock) FindByID(ctx context.Context, id string) (user.User, error) {
+	if mock.FindByIDFunc == nil {
+		panic("UserFinderMock.FindByIDFunc: method is nil but UserFinder.FindByID was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		ID  string
+	}{
+		Ctx: ctx,
+		ID:  id,
+	}
+	mock.lockFindByID.Lock()
+	mock.calls.FindByID = append(mock.calls.FindByID, callInfo)
+	mock.lockFindByID.Unlock()
+	return mock.FindByIDFunc(ctx, id)
+}
+
+// FindByIDCalls gets all the calls that were made to FindByID.
+// Check the length with:
+//
+//	len(mockedUserFinder.FindByIDCalls())
+func (mock *UserFinderMock) FindByIDCalls() []struct {
+	Ctx context.Context
+	ID  string
+} {
+	var calls []struct {
+		Ctx context.Context
+		ID  string
+	}
+	mock.lockFindByID.RLock()
+	calls = mock.calls.FindByID
+	mock.lockFindByID.RUnlock()
+	return calls
+}
+
 // Ensure that PasswordHasherMock does implement PasswordHasher.
 // If this is not the case, regenerate this file with mockery.
 var _ PasswordHasher = &PasswordHasherMock{}
@@ -474,5 +546,71 @@ func (mock *TokenIssuerMock) IssueCalls() []struct {
 	mock.lockIssue.RLock()
 	calls = mock.calls.Issue
 	mock.lockIssue.RUnlock()
+	return calls
+}
+
+// Ensure that TokenVerifierMock does implement TokenVerifier.
+// If this is not the case, regenerate this file with mockery.
+var _ TokenVerifier = &TokenVerifierMock{}
+
+// TokenVerifierMock is a mock implementation of TokenVerifier.
+//
+//	func TestSomethingThatUsesTokenVerifier(t *testing.T) {
+//
+//		// make and configure a mocked TokenVerifier
+//		mockedTokenVerifier := &TokenVerifierMock{
+//			VerifyFunc: func(token string) (string, error) {
+//				panic("mock out the Verify method")
+//			},
+//		}
+//
+//		// use mockedTokenVerifier in code that requires TokenVerifier
+//		// and then make assertions.
+//
+//	}
+type TokenVerifierMock struct {
+	// VerifyFunc mocks the Verify method.
+	VerifyFunc func(token string) (string, error)
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// Verify holds details about calls to the Verify method.
+		Verify []struct {
+			// Token is the token argument value.
+			Token string
+		}
+	}
+	lockVerify sync.RWMutex
+}
+
+// Verify calls VerifyFunc.
+func (mock *TokenVerifierMock) Verify(token string) (string, error) {
+	if mock.VerifyFunc == nil {
+		panic("TokenVerifierMock.VerifyFunc: method is nil but TokenVerifier.Verify was just called")
+	}
+	callInfo := struct {
+		Token string
+	}{
+		Token: token,
+	}
+	mock.lockVerify.Lock()
+	mock.calls.Verify = append(mock.calls.Verify, callInfo)
+	mock.lockVerify.Unlock()
+	return mock.VerifyFunc(token)
+}
+
+// VerifyCalls gets all the calls that were made to Verify.
+// Check the length with:
+//
+//	len(mockedTokenVerifier.VerifyCalls())
+func (mock *TokenVerifierMock) VerifyCalls() []struct {
+	Token string
+} {
+	var calls []struct {
+		Token string
+	}
+	mock.lockVerify.RLock()
+	calls = mock.calls.Verify
+	mock.lockVerify.RUnlock()
 	return calls
 }
