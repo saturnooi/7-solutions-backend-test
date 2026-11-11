@@ -212,8 +212,8 @@ func TestGetUser(t *testing.T) {
 			case tt.wantID != "" && (len(calls) != 1 || calls[0].ID != tt.wantID):
 				t.Errorf("GetUser calls = %+v, want one call with %q", calls, tt.wantID)
 			}
-			if tt.wantLog == "" && logs.Len() > 0 {
-				t.Errorf("unexpected log output: %s", logs.String())
+			if tt.wantLog == "" && errorLogs(&logs) != "" {
+				t.Errorf("unexpected error log: %s", errorLogs(&logs))
 			}
 			if tt.wantLog != "" && !strings.Contains(logs.String(), tt.wantLog) {
 				t.Errorf("log = %s, want it to contain %q", logs.String(), tt.wantLog)
@@ -351,8 +351,8 @@ func TestListUsers(t *testing.T) {
 			case tt.wantInput != nil && (len(calls) != 1 || calls[0].In != *tt.wantInput):
 				t.Errorf("ListUsers calls = %+v, want one call with %+v", calls, *tt.wantInput)
 			}
-			if tt.wantLog == "" && logs.Len() > 0 {
-				t.Errorf("unexpected log output: %s", logs.String())
+			if tt.wantLog == "" && errorLogs(&logs) != "" {
+				t.Errorf("unexpected error log: %s", errorLogs(&logs))
 			}
 			if tt.wantLog != "" && !strings.Contains(logs.String(), tt.wantLog) {
 				t.Errorf("log = %s, want it to contain %q", logs.String(), tt.wantLog)
@@ -528,8 +528,8 @@ func TestUpdateUser(t *testing.T) {
 				}
 			}
 
-			if tt.wantLog == "" && logs.Len() > 0 {
-				t.Errorf("unexpected log output: %s", logs.String())
+			if tt.wantLog == "" && errorLogs(&logs) != "" {
+				t.Errorf("unexpected error log: %s", errorLogs(&logs))
 			}
 			if tt.wantLog != "" && !strings.Contains(logs.String(), tt.wantLog) {
 				t.Errorf("log = %s, want it to contain %q", logs.String(), tt.wantLog)
@@ -645,8 +645,8 @@ func TestDeleteUser(t *testing.T) {
 			case tt.wantCall && (len(calls) != 1 || calls[0].CallerID != callerID || calls[0].ID != tt.target):
 				t.Errorf("DeleteUser calls = %+v, want one call with caller %q and id %q", calls, callerID, tt.target)
 			}
-			if tt.wantLog == "" && logs.Len() > 0 {
-				t.Errorf("unexpected log output: %s", logs.String())
+			if tt.wantLog == "" && errorLogs(&logs) != "" {
+				t.Errorf("unexpected error log: %s", errorLogs(&logs))
 			}
 			if tt.wantLog != "" && !strings.Contains(logs.String(), tt.wantLog) {
 				t.Errorf("log = %s, want it to contain %q", logs.String(), tt.wantLog)

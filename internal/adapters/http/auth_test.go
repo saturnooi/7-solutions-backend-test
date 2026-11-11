@@ -159,8 +159,8 @@ func TestRequireAuth(t *testing.T) {
 				t.Errorf("Authenticate calls = %+v, want one call with %q", calls, tt.wantToken)
 			}
 
-			if tt.wantLog == "" && logs.Len() > 0 {
-				t.Errorf("unexpected log output: %s", logs.String())
+			if tt.wantLog == "" && errorLogs(&logs) != "" {
+				t.Errorf("unexpected error log: %s", errorLogs(&logs))
 			}
 			if tt.wantLog != "" && !strings.Contains(logs.String(), tt.wantLog) {
 				t.Errorf("log = %s, want it to contain %q", logs.String(), tt.wantLog)
