@@ -27,6 +27,9 @@ var _ UserRepository = &UserRepositoryMock{}
 //			FindByEmailFunc: func(ctx context.Context, email string) (user.User, error) {
 //				panic("mock out the FindByEmail method")
 //			},
+//			FindByIDFunc: func(ctx context.Context, id string) (user.User, error) {
+//				panic("mock out the FindByID method")
+//			},
 //		}
 //
 //		// use mockedUserRepository in code that requires UserRepository
@@ -39,6 +42,9 @@ type UserRepositoryMock struct {
 
 	// FindByEmailFunc mocks the FindByEmail method.
 	FindByEmailFunc func(ctx context.Context, email string) (user.User, error)
+
+	// FindByIDFunc mocks the FindByID method.
+	FindByIDFunc func(ctx context.Context, id string) (user.User, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -56,9 +62,17 @@ type UserRepositoryMock struct {
 			// Email is the email argument value.
 			Email string
 		}
+		// FindByID holds details about calls to the FindByID method.
+		FindByID []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ID is the id argument value.
+			ID string
+		}
 	}
 	lockCreate      sync.RWMutex
 	lockFindByEmail sync.RWMutex
+	lockFindByID    sync.RWMutex
 }
 
 // Create calls CreateFunc.
@@ -130,6 +144,42 @@ func (mock *UserRepositoryMock) FindByEmailCalls() []struct {
 	mock.lockFindByEmail.RLock()
 	calls = mock.calls.FindByEmail
 	mock.lockFindByEmail.RUnlock()
+	return calls
+}
+
+// FindByID calls FindByIDFunc.
+func (mock *UserRepositoryMock) FindByID(ctx context.Context, id string) (user.User, error) {
+	if mock.FindByIDFunc == nil {
+		panic("UserRepositoryMock.FindByIDFunc: method is nil but UserRepository.FindByID was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		ID  string
+	}{
+		Ctx: ctx,
+		ID:  id,
+	}
+	mock.lockFindByID.Lock()
+	mock.calls.FindByID = append(mock.calls.FindByID, callInfo)
+	mock.lockFindByID.Unlock()
+	return mock.FindByIDFunc(ctx, id)
+}
+
+// FindByIDCalls gets all the calls that were made to FindByID.
+// Check the length with:
+//
+//	len(mockedUserRepository.FindByIDCalls())
+func (mock *UserRepositoryMock) FindByIDCalls() []struct {
+	Ctx context.Context
+	ID  string
+} {
+	var calls []struct {
+		Ctx context.Context
+		ID  string
+	}
+	mock.lockFindByID.RLock()
+	calls = mock.calls.FindByID
+	mock.lockFindByID.RUnlock()
 	return calls
 }
 

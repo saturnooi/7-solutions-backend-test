@@ -10,6 +10,7 @@ import (
 type UserRepository interface {
 	Create(ctx context.Context, u user.User) (user.User, error)
 	FindByEmail(ctx context.Context, email string) (user.User, error)
+	FindByID(ctx context.Context, id string) (user.User, error)
 }
 
 type PasswordHasher interface {
