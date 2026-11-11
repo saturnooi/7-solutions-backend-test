@@ -15,7 +15,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 4 | JWT middleware and the protected `POST /api/v1/users` | Done |
 | 5 | Get user by ID: `GET /api/v1/users/{id}` | Done |
 | 6 | List users: `GET /api/v1/users` with limit/offset pagination | Done |
-| 7 | Update user | Planned |
+| 7 | Update user: `PATCH /api/v1/users/{id}`, own account only | Done |
 | 8 | Delete user | Planned |
 | 9 | HTTP logging middleware | Planned |
 | 10 | Background user-count worker | Planned |
@@ -73,6 +73,12 @@ GET /api/v1/users?limit=&offset=
   → adapters/http            requireAuth, then parse limit and offset as integers (default limit 20)
   → application/userservice  ListUsers: check 1 ≤ limit ≤ 100 and offset ≥ 0
       └─ UserRepository port → adapters/repository/mongodb (Find sorted by the created_at_desc index)
+
+PATCH /api/v1/users/{id}
+  → adapters/http            requireAuth, decode {name?, email?}, take the caller's ID from the token
+  → application/userservice  UpdateUser: caller must own the account (403), then build the changes
+  → domain/user              NewChanges: normalize and validate only the fields that were sent
+      └─ UserRepository port → adapters/repository/mongodb (FindOneAndUpdate with $set on those fields)
 ```
 
 ## User rules
@@ -343,6 +349,54 @@ Response `400 Bad Request` for values outside the allowed range:
 | 401 | `unauthorized` | Token missing or rejected |
 | 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
 
+### PATCH /api/v1/users/{id}
+
+Auth: `Authorization: Bearer <access_token>`, and `{id}` must be the caller's own ID (the token's `sub`).
+
+Changes the caller's name, email, or both. A field that is absent or `null` is left unchanged. Values follow the same [user rules](#user-rules) as registration: the name is trimmed, and the email is trimmed, lowercased, and must not belong to another user. The password cannot be changed here; sending `password` is rejected as an unknown field.
+
+Request:
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/users/6af409a28ce8e42353cce49a \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":" Alice.Cooper@Example.com "}'
+```
+
+Response `200 OK`, with the updated user:
+
+```json
+{"id":"6af409a28ce8e42353cce49a","name":"Alice Cooper","email":"alice.cooper@example.com","created_at":"2026-11-11T06:22:26.129Z"}
+```
+
+Response `403 Forbidden` when `{id}` is another user:
+
+```json
+{"error":{"code":"forbidden","message":"you may only change your own account"}}
+```
+
+Response `400 Bad Request` for an empty update such as `{}`:
+
+```json
+{"error":{"code":"empty_update","message":"request must change name or email"}}
+```
+
+| Status | Code | When |
+|---|---|---|
+| 200 | | Updated |
+| 400 | `validation_failed` | A sent field breaks a [user rule](#user-rules) |
+| 400 | `empty_update` | Neither `name` nor `email` was sent |
+| 400 | `invalid_json` | Malformed JSON or an unknown field such as `password` |
+| 401 | `unauthorized` | Token missing or rejected |
+| 403 | `forbidden` | `{id}` is not the caller's own ID |
+| 404 | `user_not_found` | The caller's account no longer exists |
+| 409 | `email_already_exists` | Another user has this email |
+| 413 | `request_too_large` | Body larger than 1 MiB |
+| 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
+
+Because the token's `sub` is the user ID, not the email, a token stays valid after its owner changes email. The next login uses the new email.
+
 ## JWT
 
 Login returns an access token signed with HMAC-SHA256 (HS256) using `JWT_SECRET`. Decoded, the token from the example above is:
@@ -489,6 +543,9 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Missing internal values are not validation errors.** The password hash and creation time come from the application layer, not the client. When one is missing, `New` returns a plain error, so it surfaces as an internal error instead of being blamed on the client's input.
 - **Creation time is stored in UTC at millisecond precision.** That is the precision MongoDB keeps, so a stored user reads back exactly as it was created.
 - **User IDs are opaque strings in the domain.** The repository generates ObjectIDs when it stores a user, and only the MongoDB adapter knows that type.
+- **Users may change only their own account, and the rule lives in the use case.** `UpdateUser` takes the caller's ID from the token, so HTTP and a future gRPC method enforce the same rule. Ownership is checked before anything else, so a non-owner gets `403` whether or not the target exists and cannot use the endpoint to probe for IDs.
+- **Updates touch only the fields that were sent.** The domain builds a `Changes` value with only those fields, already normalized and validated. The repository applies it with one `FindOneAndUpdate` and `$set`, without reading the user first, so two concurrent updates to different fields cannot overwrite each other. The same unique email index that guards registration turns a taken email into `409`.
+- **The password is not part of the update.** Changing it should require the current password, which the coding test does not ask for. Sending `password` is rejected rather than silently ignored.
 - **The page-size cap lives in the use case.** HTTP only turns the query string into integers. The default of 20 and the rule 1 ≤ `limit` ≤ 100 are in `ListUsers`, because the cap protects the database no matter which adapter calls it.
 - **Listing is backed by an index.** `EnsureIndexes` creates `created_at_desc` on `{created_at: -1, _id: -1}`, which matches the sort exactly. `explain()` on a real run shows an `IXSCAN` on that index, so MongoDB never sorts in memory as the collection grows.
 - **Offset pagination over cursors.** `limit` and `offset` are simple to use and to test, and enough for an admin-style list. See Known limitations for the trade-off.
@@ -500,7 +557,8 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - Registration reveals whether an email is already registered (`409`). This comes with unique emails, and there is no rate limiting yet.
 - A duplicate registration is detected only after the password is hashed, so it still costs one bcrypt round.
 - There are no refresh tokens and no way to revoke a token before it expires. Keep `JWT_TTL` short.
-- Authentication is all-or-nothing: there are no roles, so any logged-in user may create users and read any user.
+- There are no roles. Any logged-in user may create users and read any user, but may change only their own account, and there is no administrator who can change others.
+- A password cannot be changed after registration.
 - The user list has no total count. With offset pagination, a user created while a client is paging shifts later pages by one, so a client can see the same user twice. Large offsets also get slower, because MongoDB still walks the skipped entries. Cursor (keyset) pagination on `(created_at, _id)` would fix both.
 - Login has no rate limiting or lockout, so password guessing is limited only by bcrypt's cost.
 - The dummy hash for unknown-email logins is computed on the first such request after startup, so that one request takes about twice as long.
