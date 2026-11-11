@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"user-management-api/internal/application/userservice"
 	"user-management-api/internal/domain/user"
 )
 
@@ -64,6 +65,10 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, err 
 	}
 	if errors.Is(err, user.ErrEmailAlreadyExists) {
 		writeError(w, http.StatusConflict, "email_already_exists", "email is already registered")
+		return
+	}
+	if errors.Is(err, userservice.ErrInvalidCredentials) {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
 	}
 

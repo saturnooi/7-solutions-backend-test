@@ -11,6 +11,7 @@ import (
 
 type UserService interface {
 	Register(ctx context.Context, in userservice.RegisterInput) (user.User, error)
+	Login(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error)
 }
 
 type Handler struct {
@@ -25,5 +26,6 @@ func NewHandler(users UserService, logger *slog.Logger) *Handler {
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/auth/register", h.register)
+	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	return mux
 }

@@ -22,6 +22,9 @@ var _ UserService = &UserServiceMock{}
 //
 //		// make and configure a mocked UserService
 //		mockedUserService := &UserServiceMock{
+//			LoginFunc: func(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error) {
+//				panic("mock out the Login method")
+//			},
 //			RegisterFunc: func(ctx context.Context, in userservice.RegisterInput) (user.User, error) {
 //				panic("mock out the Register method")
 //			},
@@ -32,11 +35,21 @@ var _ UserService = &UserServiceMock{}
 //
 //	}
 type UserServiceMock struct {
+	// LoginFunc mocks the Login method.
+	LoginFunc func(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error)
+
 	// RegisterFunc mocks the Register method.
 	RegisterFunc func(ctx context.Context, in userservice.RegisterInput) (user.User, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// Login holds details about calls to the Login method.
+		Login []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// In is the in argument value.
+			In userservice.LoginInput
+		}
 		// Register holds details about calls to the Register method.
 		Register []struct {
 			// Ctx is the ctx argument value.
@@ -45,7 +58,44 @@ type UserServiceMock struct {
 			In userservice.RegisterInput
 		}
 	}
+	lockLogin    sync.RWMutex
 	lockRegister sync.RWMutex
+}
+
+// Login calls LoginFunc.
+func (mock *UserServiceMock) Login(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error) {
+	if mock.LoginFunc == nil {
+		panic("UserServiceMock.LoginFunc: method is nil but UserService.Login was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		In  userservice.LoginInput
+	}{
+		Ctx: ctx,
+		In:  in,
+	}
+	mock.lockLogin.Lock()
+	mock.calls.Login = append(mock.calls.Login, callInfo)
+	mock.lockLogin.Unlock()
+	return mock.LoginFunc(ctx, in)
+}
+
+// LoginCalls gets all the calls that were made to Login.
+// Check the length with:
+//
+//	len(mockedUserService.LoginCalls())
+func (mock *UserServiceMock) LoginCalls() []struct {
+	Ctx context.Context
+	In  userservice.LoginInput
+} {
+	var calls []struct {
+		Ctx context.Context
+		In  userservice.LoginInput
+	}
+	mock.lockLogin.RLock()
+	calls = mock.calls.Login
+	mock.lockLogin.RUnlock()
+	return calls
 }
 
 // Register calls RegisterFunc.
