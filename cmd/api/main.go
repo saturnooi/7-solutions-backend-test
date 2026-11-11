@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 
 	"user-management-api/internal/adapters/auth"
+	grpcadapter "user-management-api/internal/adapters/grpc"
 	httpadapter "user-management-api/internal/adapters/http"
 	"user-management-api/internal/adapters/repository/mongodb"
 	"user-management-api/internal/adapters/worker"
@@ -69,8 +71,9 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	service := userservice.New(users, auth.NewBcryptHasher(cfg.BcryptCost), tokens, time.Now)
+	authenticator := userservice.NewAuthenticator(tokens, users)
 	server := &http.Server{
-		Handler:           httpadapter.NewHandler(service, userservice.NewAuthenticator(tokens, users), logger).Routes(),
+		Handler:           httpadapter.NewHandler(service, authenticator, logger).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -78,18 +81,30 @@ func run(logger *slog.Logger) error {
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 
+	grpcServer := grpcadapter.NewServer(service, authenticator, logger)
 	counter := worker.NewUserCountLogger(service, userCountInterval, logger)
 
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("http server: %w", err)
 	}
+	grpcListener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.GRPCAddr)
+	if err != nil {
+		return errors.Join(fmt.Errorf("grpc server: %w", err), listener.Close())
+	}
 	logger.Info("http server listening", "addr", listener.Addr().String())
+	logger.Info("grpc server listening", "addr", grpcListener.Addr().String())
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("http server: %w", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			return fmt.Errorf("grpc server: %w", err)
 		}
 		return nil
 	})
@@ -103,11 +118,30 @@ func run(logger *slog.Logger) error {
 		logger.Info("shutting down", "timeout", shutdownTimeout.String())
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("http server shutdown: %w", err)
+		httpErr := server.Shutdown(shutdownCtx)
+		if httpErr == nil {
+			logger.Info("http server stopped")
 		}
-		logger.Info("http server stopped")
+		stopGRPC(shutdownCtx, grpcServer)
+		logger.Info("grpc server stopped")
+		if httpErr != nil {
+			return fmt.Errorf("http server shutdown: %w", httpErr)
+		}
 		return nil
 	})
 	return group.Wait()
+}
+
+func stopGRPC(ctx context.Context, server *grpc.Server) {
+	stopped := make(chan struct{})
+	go func() {
+		server.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		server.Stop()
+		<-stopped
+	}
 }
