@@ -16,8 +16,8 @@ type UpdateInput struct {
 }
 
 func (s *Service) UpdateUser(ctx context.Context, callerID, id string, in UpdateInput) (user.User, error) {
-	if callerID == "" || callerID != id {
-		return user.User{}, ErrForbidden
+	if err := authorizeOwner(callerID, id); err != nil {
+		return user.User{}, err
 	}
 
 	changes, err := user.NewChanges(in.Name, in.Email)
@@ -30,4 +30,11 @@ func (s *Service) UpdateUser(ctx context.Context, callerID, id string, in Update
 		return user.User{}, fmt.Errorf("update user: %w", err)
 	}
 	return updated, nil
+}
+
+func authorizeOwner(callerID, id string) error {
+	if callerID == "" || callerID != id {
+		return ErrForbidden
+	}
+	return nil
 }
