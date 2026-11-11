@@ -149,6 +149,130 @@ func TestJWTService_Issue_RejectsEmptySubject(t *testing.T) {
 	}
 }
 
+func TestJWTService_Verify(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.November, 11, 9, 30, 0, 0, time.UTC)
+	service := newTestJWTService(t, time.Hour, func() time.Time { return now })
+	claims := func(change func(*jwt.RegisteredClaims)) jwt.RegisteredClaims {
+		c := jwt.RegisteredClaims{
+			Subject:   testUserID,
+			Issuer:    testIssuer,
+			IssuedAt:  jwt.NewNumericDate(now.Add(-time.Minute)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+		}
+		if change != nil {
+			change(&c)
+		}
+		return c
+	}
+	issued, err := service.Issue(testUserID)
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	forOther := signToken(t, jwt.SigningMethodHS256, []byte(testSecret), claims(func(c *jwt.RegisteredClaims) { c.Subject = "attacker" }))
+	tampered := strings.Join([]string{
+		strings.Split(issued.Value, ".")[0],
+		strings.Split(forOther, ".")[1],
+		strings.Split(issued.Value, ".")[2],
+	}, ".")
+
+	tests := []struct {
+		name    string
+		token   string
+		want    string
+		wantErr error
+	}{
+		{name: "token issued by the service", token: issued.Value, want: testUserID},
+		{
+			name:  "expired 3 seconds ago is within the leeway",
+			token: signToken(t, jwt.SigningMethodHS256, []byte(testSecret), claims(func(c *jwt.RegisteredClaims) { c.ExpiresAt = jwt.NewNumericDate(now.Add(-3 * time.Second)) })),
+			want:  testUserID,
+		},
+		{
+			name:    "expired 6 seconds ago",
+			token:   signToken(t, jwt.SigningMethodHS256, []byte(testSecret), claims(func(c *jwt.RegisteredClaims) { c.ExpiresAt = jwt.NewNumericDate(now.Add(-6 * time.Second)) })),
+			wantErr: jwt.ErrTokenExpired,
+		},
+		{
+			name:    "issued in the future",
+			token:   signToken(t, jwt.SigningMethodHS256, []byte(testSecret), claims(func(c *jwt.RegisteredClaims) { c.IssuedAt = jwt.NewNumericDate(now.Add(time.Minute)) })),
+			wantErr: jwt.ErrTokenUsedBeforeIssued,
+		},
+		{
+			name:    "signed with another secret",
+			token:   signToken(t, jwt.SigningMethodHS256, []byte("another-secret-that-is-at-least-32-bytes"), claims(nil)),
+			wantErr: jwt.ErrTokenSignatureInvalid,
+		},
+		{
+			name:    "payload swapped under a valid signature",
+			token:   tampered,
+			wantErr: jwt.ErrTokenSignatureInvalid,
+		},
+		{
+			name:    "alg none",
+			token:   signToken(t, jwt.SigningMethodNone, jwt.UnsafeAllowNoneSignatureType, claims(nil)),
+			wantErr: jwt.ErrTokenSignatureInvalid,
+		},
+		{
+			name:    "HS512 with the right secret",
+			token:   signToken(t, jwt.SigningMethodHS512, []byte(testSecret), claims(nil)),
+			wantErr: jwt.ErrTokenSignatureInvalid,
+		},
+		{
+			name:    "another issuer",
+			token:   signToken(t, jwt.SigningMethodHS256, []byte(testSecret), claims(func(c *jwt.RegisteredClaims) { c.Issuer = "someone-else" })),
+			wantErr: jwt.ErrTokenInvalidIssuer,
+		},
+		{
+			name:    "no expiry",
+			token:   signToken(t, jwt.SigningMethodHS256, []byte(testSecret), claims(func(c *jwt.RegisteredClaims) { c.ExpiresAt = nil })),
+			wantErr: jwt.ErrTokenRequiredClaimMissing,
+		},
+		{
+			name:    "no subject",
+			token:   signToken(t, jwt.SigningMethodHS256, []byte(testSecret), claims(func(c *jwt.RegisteredClaims) { c.Subject = "" })),
+			wantErr: errInvalidToken,
+		},
+		{name: "not a JWT", token: "not-a-jwt", wantErr: jwt.ErrTokenMalformed},
+		{name: "empty", token: "", wantErr: jwt.ErrTokenMalformed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := service.Verify(tt.token)
+
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Verify() error = %v, want nil", err)
+				}
+			} else {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("Verify() error = %v, want %v", err, tt.wantErr)
+				}
+				if !errors.Is(err, errInvalidToken) {
+					t.Errorf("Verify() error = %v, want it to wrap errInvalidToken", err)
+				}
+			}
+			if got != tt.want {
+				t.Errorf("Verify() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func signToken(t *testing.T, method jwt.SigningMethod, key any, claims jwt.Claims) string {
+	t.Helper()
+
+	signed, err := jwt.NewWithClaims(method, claims).SignedString(key)
+	if err != nil {
+		t.Fatalf("sign test token: %v", err)
+	}
+	return signed
+}
+
 func newTestJWTService(t *testing.T, ttl time.Duration, now func() time.Time) *JWTService {
 	t.Helper()
 
