@@ -40,6 +40,7 @@ linters:
           files:
             - "**/internal/adapters/http/**"
             - "**/internal/adapters/grpc/**"
+            - "**/internal/adapters/worker/**"
           deny:
             - pkg: go.mongodb.org/mongo-driver
               desc: delivery adapters must call use cases, not the database
