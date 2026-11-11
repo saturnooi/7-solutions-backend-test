@@ -3,6 +3,7 @@ module user-management-api
 go 1.26.0
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	go.mongodb.org/mongo-driver/v2 v2.10.0
 	golang.org/x/crypto v0.58.0
 )
