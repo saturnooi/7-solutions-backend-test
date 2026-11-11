@@ -2,6 +2,7 @@ package userservice
 
 import (
 	"context"
+	"time"
 
 	"user-management-api/internal/domain/user"
 )
@@ -12,4 +13,13 @@ type UserRepository interface {
 
 type PasswordHasher interface {
 	Hash(password string) (string, error)
+}
+
+type AccessToken struct {
+	Value     string
+	ExpiresIn time.Duration
+}
+
+type TokenIssuer interface {
+	Issue(subject string) (AccessToken, error)
 }
