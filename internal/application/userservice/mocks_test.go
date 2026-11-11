@@ -30,6 +30,9 @@ var _ UserRepository = &UserRepositoryMock{}
 //			FindByIDFunc: func(ctx context.Context, id string) (user.User, error) {
 //				panic("mock out the FindByID method")
 //			},
+//			ListFunc: func(ctx context.Context, limit int, offset int) ([]user.User, error) {
+//				panic("mock out the List method")
+//			},
 //		}
 //
 //		// use mockedUserRepository in code that requires UserRepository
@@ -45,6 +48,9 @@ type UserRepositoryMock struct {
 
 	// FindByIDFunc mocks the FindByID method.
 	FindByIDFunc func(ctx context.Context, id string) (user.User, error)
+
+	// ListFunc mocks the List method.
+	ListFunc func(ctx context.Context, limit int, offset int) ([]user.User, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -69,10 +75,20 @@ type UserRepositoryMock struct {
 			// ID is the id argument value.
 			ID string
 		}
+		// List holds details about calls to the List method.
+		List []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Limit is the limit argument value.
+			Limit int
+			// Offset is the offset argument value.
+			Offset int
+		}
 	}
 	lockCreate      sync.RWMutex
 	lockFindByEmail sync.RWMutex
 	lockFindByID    sync.RWMutex
+	lockList        sync.RWMutex
 }
 
 // Create calls CreateFunc.
@@ -180,6 +196,46 @@ func (mock *UserRepositoryMock) FindByIDCalls() []struct {
 	mock.lockFindByID.RLock()
 	calls = mock.calls.FindByID
 	mock.lockFindByID.RUnlock()
+	return calls
+}
+
+// List calls ListFunc.
+func (mock *UserRepositoryMock) List(ctx context.Context, limit int, offset int) ([]user.User, error) {
+	if mock.ListFunc == nil {
+		panic("UserRepositoryMock.ListFunc: method is nil but UserRepository.List was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Limit  int
+		Offset int
+	}{
+		Ctx:    ctx,
+		Limit:  limit,
+		Offset: offset,
+	}
+	mock.lockList.Lock()
+	mock.calls.List = append(mock.calls.List, callInfo)
+	mock.lockList.Unlock()
+	return mock.ListFunc(ctx, limit, offset)
+}
+
+// ListCalls gets all the calls that were made to List.
+// Check the length with:
+//
+//	len(mockedUserRepository.ListCalls())
+func (mock *UserRepositoryMock) ListCalls() []struct {
+	Ctx    context.Context
+	Limit  int
+	Offset int
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Limit  int
+		Offset int
+	}
+	mock.lockList.RLock()
+	calls = mock.calls.List
+	mock.lockList.RUnlock()
 	return calls
 }
 

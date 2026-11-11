@@ -11,6 +11,7 @@ type UserRepository interface {
 	Create(ctx context.Context, u user.User) (user.User, error)
 	FindByEmail(ctx context.Context, email string) (user.User, error)
 	FindByID(ctx context.Context, id string) (user.User, error)
+	List(ctx context.Context, limit, offset int) ([]user.User, error)
 }
 
 type PasswordHasher interface {
