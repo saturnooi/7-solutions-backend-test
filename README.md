@@ -19,7 +19,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 8 | Delete user: `DELETE /api/v1/users/{id}`, own account only; tokens of deleted users stop working | Done |
 | 9 | HTTP logging middleware: method, path, status, duration | Done |
 | 10 | Background worker: logs the user count every 10 seconds | Done |
-| 11 | gRPC (CreateUser, GetUser) | Planned |
+| 11 | gRPC: `CreateUser` and `GetUser`, token required | Done |
 | 12 | Docker and Docker Compose | Planned |
 | 13 | Integration tests | Planned |
 | 14 | Final quality gate | Planned |
@@ -94,6 +94,11 @@ Every 10 seconds
   → adapters/worker          UserCountLogger: a ticker, stopped by the shutdown context
   → application/userservice  CountUsers
       └─ UserRepository port → adapters/repository/mongodb (CountDocuments)
+
+gRPC user.v1.UserService/CreateUser and /GetUser
+  → adapters/grpc            interceptor: authorization metadata → the same Authenticator as HTTP
+  → application/userservice  the same Register and GetUser use cases as REST
+  → adapters/grpc            map the user to the proto message, or the error to a gRPC status
 ```
 
 ## User rules
@@ -122,6 +127,10 @@ Error messages name the field and the rule, never the submitted value, for examp
 ├── go.mod
 ├── cmd/
 │   └── api/                   # composition root: config, wiring, graceful shutdown
+├── gen/
+│   └── user/v1/               # code generated from proto/ by `make proto` (do not edit)
+├── proto/
+│   └── user/v1/user.proto     # gRPC contract
 ├── internal/
 │   ├── domain/
 │   │   └── user/              # User entity, validation rules, domain errors
@@ -129,6 +138,7 @@ Error messages name the field and the rule, never the submitted value, for examp
 │   │   └── userservice/       # use cases and the ports they need
 │   ├── adapters/
 │   │   ├── auth/              # bcrypt password hasher, JWT issuer
+│   │   ├── grpc/              # gRPC server, auth interceptor, status mapping
 │   │   ├── http/              # REST handlers, DTOs, error mapping, auth and logging middleware
 │   │   ├── repository/
 │   │   │   └── mongodb/       # UserRepository on MongoDB
@@ -146,12 +156,14 @@ Error messages name the field and the rule, never the submitted value, for examp
 - Docker with Compose v2, for MongoDB
 - [golangci-lint](https://golangci-lint.run/) v2
 - make
+- `protoc` only to regenerate the gRPC code (`brew install protobuf`). The generated code is committed, so building and testing do not need it.
 
 ## Environment variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `HTTP_ADDR` | No | `:8080` | Address the HTTP server listens on |
+| `GRPC_ADDR` | No | `:9090` | Address the gRPC server listens on |
 | `MONGO_URI` | Yes | | MongoDB connection string |
 | `MONGO_DATABASE` | No | `user_management` | Database name |
 | `BCRYPT_COST` | No | `12` | bcrypt work factor, from 10 to 31 |
@@ -499,6 +511,62 @@ Every rejection returns the same `401` body, so a client cannot learn why a toke
 
 The `WWW-Authenticate` header follows RFC 6750: `Bearer` when no token was sent, and `Bearer error="invalid_token"` when a token was sent but rejected. If the user lookup itself fails, for example while MongoDB is unreachable, the response is `500 internal_error` rather than `401`, so an outage does not look like every client being logged out. On success, the middleware stores the token's `sub` (the user ID) in the request context for the handler.
 
+## gRPC
+
+The gRPC server listens on `GRPC_ADDR` (default `:9090`) and serves [proto/user/v1/user.proto](proto/user/v1/user.proto):
+
+```proto
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+}
+```
+
+Both RPCs call the same use cases as `POST /api/v1/users` and `GET /api/v1/users/{id}`, and follow the same rules. Both require a token, sent as `authorization` metadata in the same `Bearer <token>` form as the HTTP header and checked by the same `Authenticator`. A request with more than one `authorization` value is rejected.
+
+Examples with [grpcurl](https://github.com/fullstorydev/grpcurl) from a real run. The server has no reflection, so grpcurl reads the proto file:
+
+```bash
+grpcurl -plaintext -import-path proto -proto user/v1/user.proto \
+  -H "authorization: Bearer $TOKEN" \
+  -d '{"name":"Bob Jones","email":"bob@example.com","password":"correct horse"}' \
+  localhost:9090 user.v1.UserService/CreateUser
+```
+
+```json
+{
+  "user": {
+    "id": "6af417b26a1c98ebb53907de",
+    "name": "Bob Jones",
+    "email": "bob@example.com",
+    "createdAt": "2026-11-11T07:22:26.164Z"
+  }
+}
+```
+
+```bash
+grpcurl -plaintext -import-path proto -proto user/v1/user.proto \
+  -H "authorization: Bearer $TOKEN" -d '{"id":"6af400dac46deb7de7f3b26f"}' \
+  localhost:9090 user.v1.UserService/GetUser
+```
+
+```text
+ERROR:
+  Code: NotFound
+  Message: user not found
+```
+
+| Situation | Code | Message |
+|---|---|---|
+| Token missing, malformed or rejected | `Unauthenticated` | `a valid bearer token is required` |
+| A field breaks a [user rule](#user-rules) | `InvalidArgument` | `request validation failed`, with a `google.rpc.BadRequest` detail listing each field |
+| `id` is not 24 hexadecimal characters | `InvalidArgument` | `id must be a 24-character hexadecimal string` |
+| No user has this ID | `NotFound` | `user not found` |
+| Email already registered | `AlreadyExists` | `email is already registered` |
+| Anything unexpected | `Internal` | `internal server error`, with the cause logged as `rpc failed` |
+
+The `BadRequest` detail carries the same field messages as the REST `fields` array, for example `name: is required`. Go clients read it with `status.Convert(err).Details()`. grpcurl prints it as raw bytes, because it only loads `user.proto`.
+
 ## Logging
 
 The API writes JSON lines to standard output with `log/slog`. A middleware around the whole router logs every request once, after the response, including `401`, `404` and `405` responses. Lines from a real run:
@@ -536,13 +604,14 @@ If a count fails, the worker logs `count users failed` at `ERROR` with the cause
 
 ## Graceful shutdown
 
-`main` runs the HTTP server and the worker in one `errgroup`, tied to a context that `SIGINT` (Ctrl+C) or `SIGTERM` cancels. On a signal:
+`main` runs the HTTP server, the gRPC server and the worker in one `errgroup`, tied to a context that `SIGINT` (Ctrl+C) or `SIGTERM` cancels. On a signal:
 
 1. The worker stops at its next select and logs `user count worker stopped`.
-2. The server stops accepting connections and waits up to 10 seconds for in-flight requests (`http.Server.Shutdown`).
-3. The MongoDB client disconnects, and the process exits with status 0.
+2. The HTTP server stops accepting connections and waits for in-flight requests (`http.Server.Shutdown`).
+3. The gRPC server does the same (`GracefulStop`). If calls are still running when the 10-second shutdown budget runs out, it is stopped hard (`Stop`).
+4. The MongoDB client disconnects, and the process exits with status 0.
 
-A second signal during shutdown terminates the process immediately. If the server cannot start, for example because the port is taken, the listener fails before the worker starts, the error is logged as `api stopped`, and the process exits with status 1:
+A second signal during shutdown terminates the process immediately. Both listeners are opened before anything starts. If either cannot start, for example because a port is taken, nothing else starts, the error is logged as `api stopped`, and the process exits with status 1:
 
 ```json
 {"time":"2026-11-11T14:09:47.782428+07:00","level":"ERROR","msg":"api stopped","error":"http server: listen tcp 127.0.0.1:8080: bind: address already in use"}
@@ -556,6 +625,7 @@ A second signal during shutdown terminates the process immediately. If the serve
 | `make db-up` | Start MongoDB in Docker and wait until it is healthy |
 | `make db-down` | Stop MongoDB, keeping its data |
 | `make mocks` | Regenerate test mocks from [.mockery.yml](.mockery.yml) |
+| `make proto` | Regenerate `gen/` from `proto/`. Needs `protoc`. The Go plugins are installed at pinned versions into the git-ignored `bin/`. |
 | `make fmt` | Format all Go files in place |
 | `make fmt-check` | Fail if any file is not gofmt-formatted |
 | `make build` | Compile every package |
@@ -578,6 +648,7 @@ Tests use the standard `testing` package. Table-driven tests are the default sty
 | Domain | Real values only. The domain has no dependencies. |
 | Application | Ports replaced by generated mocks |
 | HTTP | `httptest` through the real router, with the use case replaced by a generated mock. Bodies are compared exactly, so a leaked field fails the test. |
+| gRPC | A real gRPC server and client over an in-memory `bufconn` connection, with mocked use cases and `Authenticator`. Assertions are on what a client actually receives: status codes, messages and `BadRequest` details. Plus end-to-end with the real JWT service and `Authenticator`. |
 | Worker | `testing/synctest`, so the 10-second ticker runs on a fake clock: 35 simulated seconds take no real time. Covers counts per tick, nothing before the first tick, recovery after a failed count, a count cut short by shutdown, and a 1-minute fake-clock bound that fails fast if `Run` ignores cancellation. |
 | Logging middleware | Status capture with small stub handlers, the full router for wiring, and `testing/synctest` for the duration: a handler that sleeps 150 ms on the fake clock must log exactly `150`, with no real waiting |
 | Authentication | The `Authenticator` use case with mocked ports; header parsing with a mocked `Authenticator`; and end-to-end with the real JWT service and `Authenticator`: a valid token, an expired one, a foreign-secret one, and a valid token whose user was deleted |
@@ -635,6 +706,10 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Passwords over 72 bytes never match.** bcrypt's `CompareHashAndPassword` reads only the first 72 bytes, so a user with a 72-byte password could otherwise log in with that password plus any suffix. The hasher's `Compare` rejects longer passwords before calling bcrypt.
 - **The JWT secret has no default.** `JWT_SECRET` must be set and at least 32 bytes long, and `.env.example` leaves it empty. The JWT adapter also refuses a shorter key itself, because golang-jwt signs with an empty key without complaint.
 - **Only HS256 is issued, with minimal claims.** Tokens carry `sub`, `iss`, `iat` and `exp`, and nothing personal such as the email, because a JWT payload is readable by anyone who holds the token.
+- **gRPC is a second front door, not a second implementation.** The gRPC adapter calls the same `Register` and `GetUser` use cases and the same `Authenticator` as HTTP, so validation, uniqueness and token rules exist once. It only maps requests to inputs, users to messages, and errors to status codes.
+- **Both RPCs require a token,** matching their REST counterparts. Ambiguous metadata (two `authorization` values) is rejected instead of picking one.
+- **Generated code is committed.** `gen/` is reproducible with `make proto`, but committing it means building, testing and running never need `protoc`. Plugin versions are pinned in the Makefile and installed into the project's `bin/`, not globally.
+- **No server reflection.** Clients use the proto file, which is the contract anyway. Reflection would be a one-line addition if wanted.
 - **The worker is a driving adapter.** Like the HTTP handlers, it calls a use case (`CountUsers`) through a one-method interface it declares, and depguard stops it from reaching the repository directly. The use case does not know a ticker exists.
 - **One errgroup owns the long-running parts.** The server, the worker and the shutdown step share one cancellable context, so a signal or a server failure stops everything, and `main` returns the first real error. The listener is opened before anything starts, so `http server listening` is logged only once the port is actually bound.
 - **The worker never takes the API down.** A failed count is logged and retried at the next tick. Errors caused by shutdown cancelling an in-flight count are expected, so they are not logged as errors.
@@ -661,6 +736,8 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 ## Known limitations
 
 - The local MongoDB container has no authentication. It is published only on `127.0.0.1`.
+- HTTP and gRPC are served without TLS. In production, TLS is expected to end at a load balancer or proxy in front of the API.
+- gRPC calls are not written to the request log. Failed calls are logged as `rpc failed`, but there is no per-call line like the HTTP `http request` line.
 - Registration reveals whether an email is already registered (`409`). This comes with unique emails, and there is no rate limiting yet.
 - A duplicate registration is detected only after the password is hashed, so it still costs one bcrypt round.
 - There are no refresh tokens and no logout. Apart from deleting the account, a token cannot be revoked before it expires. Keep `JWT_TTL` short.
