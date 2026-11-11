@@ -88,7 +88,7 @@ func TestLogRequests(t *testing.T) {
 			t.Parallel()
 
 			var logs bytes.Buffer
-			h := NewHandler(&UserServiceMock{}, &AuthenticatorMock{}, slog.New(slog.NewJSONHandler(&logs, nil)))
+			h := NewHandler(&UserServiceMock{}, &AuthenticatorMock{}, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil)))
 			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, nil)
 			rec := httptest.NewRecorder()
 
@@ -111,7 +111,7 @@ func TestLogRequests(t *testing.T) {
 func TestLogRequests_KeepsResponseControllerWorking(t *testing.T) {
 	t.Parallel()
 
-	h := NewHandler(&UserServiceMock{}, &AuthenticatorMock{}, slog.New(slog.DiscardHandler))
+	h := NewHandler(&UserServiceMock{}, &AuthenticatorMock{}, &HealthCheckerMock{}, slog.New(slog.DiscardHandler))
 	var flushErr error
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		flushErr = http.NewResponseController(w).Flush()
@@ -133,7 +133,7 @@ func TestLogRequests_MeasuresDuration(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		var logs bytes.Buffer
-		h := NewHandler(&UserServiceMock{}, &AuthenticatorMock{}, slog.New(slog.NewJSONHandler(&logs, nil)))
+		h := NewHandler(&UserServiceMock{}, &AuthenticatorMock{}, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil)))
 		slow := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(150 * time.Millisecond)
 			w.WriteHeader(http.StatusOK)
@@ -204,6 +204,7 @@ func TestRoutes_LogEveryRequest(t *testing.T) {
 			router := NewHandler(
 				&UserServiceMock{RegisterFunc: register},
 				&AuthenticatorMock{AuthenticateFunc: reject},
+				&HealthCheckerMock{},
 				slog.New(slog.NewJSONHandler(&logs, nil)),
 			).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, strings.NewReader(tt.body))

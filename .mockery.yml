@@ -20,6 +20,7 @@ packages:
     interfaces:
       UserService: {}
       Authenticator: {}
+      HealthChecker: {}
   user-management-api/internal/adapters/grpc:
     interfaces:
       UserService: {}

@@ -118,7 +118,7 @@ func TestRequireAuth(t *testing.T) {
 
 			auth := &AuthenticatorMock{AuthenticateFunc: tt.authenticate}
 			var logs bytes.Buffer
-			h := NewHandler(&UserServiceMock{}, auth, slog.New(slog.NewJSONHandler(&logs, nil)))
+			h := NewHandler(&UserServiceMock{}, auth, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil)))
 			var nextCalled bool
 			var seenUserID string
 			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

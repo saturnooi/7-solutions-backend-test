@@ -89,7 +89,7 @@ func TestCreateUser(t *testing.T) {
 			t.Parallel()
 
 			service := &UserServiceMock{RegisterFunc: tt.register}
-			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: tt.authenticate}, slog.New(slog.DiscardHandler)).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: tt.authenticate}, &HealthCheckerMock{}, slog.New(slog.DiscardHandler)).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, usersPath, strings.NewReader(createBody))
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -190,7 +190,7 @@ func TestGetUser(t *testing.T) {
 
 			service := &UserServiceMock{GetUserFunc: tt.getUser}
 			var logs bytes.Buffer
-			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.path, nil)
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -329,7 +329,7 @@ func TestListUsers(t *testing.T) {
 
 			service := &UserServiceMock{ListUsersFunc: tt.list}
 			var logs bytes.Buffer
-			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, usersPath+tt.query, nil)
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -495,7 +495,7 @@ func TestUpdateUser(t *testing.T) {
 
 			service := &UserServiceMock{UpdateUserFunc: tt.update}
 			var logs bytes.Buffer
-			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, usersPath+"/"+tt.target, strings.NewReader(tt.body))
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -623,7 +623,7 @@ func TestDeleteUser(t *testing.T) {
 
 			service := &UserServiceMock{DeleteUserFunc: tt.deleteUser}
 			var logs bytes.Buffer
-			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{AuthenticateFunc: accept}, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, usersPath+"/"+tt.target, nil)
 			if tt.authorization != "" {
 				req.Header.Set("Authorization", tt.authorization)
@@ -690,7 +690,7 @@ func TestProtectedRoute_WithRealAuthentication(t *testing.T) {
 				t.Fatalf("Issue() error = %v", err)
 			}
 			service := &UserServiceMock{RegisterFunc: func(context.Context, userservice.RegisterInput) (user.User, error) { return created, nil }}
-			router := NewHandler(service, userservice.NewAuthenticator(verifier, tt.users), slog.New(slog.DiscardHandler)).Routes()
+			router := NewHandler(service, userservice.NewAuthenticator(verifier, tt.users), &HealthCheckerMock{}, slog.New(slog.DiscardHandler)).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, usersPath, strings.NewReader(createBody))
 			req.Header.Set("Authorization", "Bearer "+token.Value)
 			rec := httptest.NewRecorder()

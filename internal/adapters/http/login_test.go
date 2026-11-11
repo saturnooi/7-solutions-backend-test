@@ -100,7 +100,7 @@ func TestLogin(t *testing.T) {
 
 			service := &UserServiceMock{LoginFunc: tt.login}
 			var logs bytes.Buffer
-			router := NewHandler(service, &AuthenticatorMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			router := NewHandler(service, &AuthenticatorMock{}, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, loginPath, strings.NewReader(tt.body))
 			rec := httptest.NewRecorder()
 

@@ -73,7 +73,7 @@ func run(logger *slog.Logger) error {
 	service := userservice.New(users, auth.NewBcryptHasher(cfg.BcryptCost), tokens, time.Now)
 	authenticator := userservice.NewAuthenticator(tokens, users)
 	server := &http.Server{
-		Handler:           httpadapter.NewHandler(service, authenticator, logger).Routes(),
+		Handler:           httpadapter.NewHandler(service, authenticator, database.NewHealth(client), logger).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

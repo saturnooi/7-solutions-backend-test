@@ -21,15 +21,17 @@ type UserService interface {
 type Handler struct {
 	users  UserService
 	auth   Authenticator
+	health HealthChecker
 	logger *slog.Logger
 }
 
-func NewHandler(users UserService, auth Authenticator, logger *slog.Logger) *Handler {
-	return &Handler{users: users, auth: auth, logger: logger}
+func NewHandler(users UserService, auth Authenticator, health HealthChecker, logger *slog.Logger) *Handler {
+	return &Handler{users: users, auth: auth, health: health, logger: logger}
 }
 
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("POST /api/v1/auth/register", h.register)
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.Handle("POST /api/v1/users", h.requireAuth(http.HandlerFunc(h.register)))

@@ -423,3 +423,69 @@ func (mock *UserServiceMock) UpdateUserCalls() []struct {
 	mock.lockUpdateUser.RUnlock()
 	return calls
 }
+
+// Ensure that HealthCheckerMock does implement HealthChecker.
+// If this is not the case, regenerate this file with mockery.
+var _ HealthChecker = &HealthCheckerMock{}
+
+// HealthCheckerMock is a mock implementation of HealthChecker.
+//
+//	func TestSomethingThatUsesHealthChecker(t *testing.T) {
+//
+//		// make and configure a mocked HealthChecker
+//		mockedHealthChecker := &HealthCheckerMock{
+//			CheckFunc: func(ctx context.Context) error {
+//				panic("mock out the Check method")
+//			},
+//		}
+//
+//		// use mockedHealthChecker in code that requires HealthChecker
+//		// and then make assertions.
+//
+//	}
+type HealthCheckerMock struct {
+	// CheckFunc mocks the Check method.
+	CheckFunc func(ctx context.Context) error
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// Check holds details about calls to the Check method.
+		Check []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+		}
+	}
+	lockCheck sync.RWMutex
+}
+
+// Check calls CheckFunc.
+func (mock *HealthCheckerMock) Check(ctx context.Context) error {
+	if mock.CheckFunc == nil {
+		panic("HealthCheckerMock.CheckFunc: method is nil but HealthChecker.Check was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
+	mock.lockCheck.Lock()
+	mock.calls.Check = append(mock.calls.Check, callInfo)
+	mock.lockCheck.Unlock()
+	return mock.CheckFunc(ctx)
+}
+
+// CheckCalls gets all the calls that were made to Check.
+// Check the length with:
+//
+//	len(mockedHealthChecker.CheckCalls())
+func (mock *HealthCheckerMock) CheckCalls() []struct {
+	Ctx context.Context
+} {
+	var calls []struct {
+		Ctx context.Context
+	}
+	mock.lockCheck.RLock()
+	calls = mock.calls.Check
+	mock.lockCheck.RUnlock()
+	return calls
+}
