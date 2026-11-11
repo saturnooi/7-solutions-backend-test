@@ -38,6 +38,7 @@ func validationError(checks ...FieldError) error {
 var (
 	ErrEmailAlreadyExists = errors.New("user: email already exists")
 	ErrNotFound           = errors.New("user: not found")
+	ErrInvalidID          = errors.New("user: invalid id")
 )
 
 var (
