@@ -88,6 +88,9 @@ var _ UserService = &UserServiceMock{}
 //
 //		// make and configure a mocked UserService
 //		mockedUserService := &UserServiceMock{
+//			GetUserFunc: func(ctx context.Context, id string) (user.User, error) {
+//				panic("mock out the GetUser method")
+//			},
 //			LoginFunc: func(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error) {
 //				panic("mock out the Login method")
 //			},
@@ -101,6 +104,9 @@ var _ UserService = &UserServiceMock{}
 //
 //	}
 type UserServiceMock struct {
+	// GetUserFunc mocks the GetUser method.
+	GetUserFunc func(ctx context.Context, id string) (user.User, error)
+
 	// LoginFunc mocks the Login method.
 	LoginFunc func(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error)
 
@@ -109,6 +115,13 @@ type UserServiceMock struct {
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// GetUser holds details about calls to the GetUser method.
+		GetUser []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ID is the id argument value.
+			ID string
+		}
 		// Login holds details about calls to the Login method.
 		Login []struct {
 			// Ctx is the ctx argument value.
@@ -124,8 +137,45 @@ type UserServiceMock struct {
 			In userservice.RegisterInput
 		}
 	}
+	lockGetUser  sync.RWMutex
 	lockLogin    sync.RWMutex
 	lockRegister sync.RWMutex
+}
+
+// GetUser calls GetUserFunc.
+func (mock *UserServiceMock) GetUser(ctx context.Context, id string) (user.User, error) {
+	if mock.GetUserFunc == nil {
+		panic("UserServiceMock.GetUserFunc: method is nil but UserService.GetUser was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		ID  string
+	}{
+		Ctx: ctx,
+		ID:  id,
+	}
+	mock.lockGetUser.Lock()
+	mock.calls.GetUser = append(mock.calls.GetUser, callInfo)
+	mock.lockGetUser.Unlock()
+	return mock.GetUserFunc(ctx, id)
+}
+
+// GetUserCalls gets all the calls that were made to GetUser.
+// Check the length with:
+//
+//	len(mockedUserService.GetUserCalls())
+func (mock *UserServiceMock) GetUserCalls() []struct {
+	Ctx context.Context
+	ID  string
+} {
+	var calls []struct {
+		Ctx context.Context
+		ID  string
+	}
+	mock.lockGetUser.RLock()
+	calls = mock.calls.GetUser
+	mock.lockGetUser.RUnlock()
+	return calls
 }
 
 // Login calls LoginFunc.

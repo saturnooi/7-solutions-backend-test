@@ -67,6 +67,14 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, err 
 		writeError(w, http.StatusConflict, "email_already_exists", "email is already registered")
 		return
 	}
+	if errors.Is(err, user.ErrInvalidID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "id must be a 24-character hexadecimal string")
+		return
+	}
+	if errors.Is(err, user.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "user_not_found", "user not found")
+		return
+	}
 	if errors.Is(err, userservice.ErrInvalidCredentials) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
