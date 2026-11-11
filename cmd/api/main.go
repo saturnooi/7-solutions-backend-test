@@ -41,20 +41,22 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if err := run(logger); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := run(ctx, logger, os.Getenv); err != nil {
 		logger.Error("api stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
-	cfg, err := config.Load(os.Getenv)
+func run(ctx context.Context, logger *slog.Logger, getenv func(string) string) error {
+	cfg, err := config.Load(getenv)
 	if err != nil {
 		return err
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	client, err := database.Connect(ctx, cfg.MongoURI, mongoTimeout)
 	if err != nil {
@@ -122,7 +124,6 @@ func run(logger *slog.Logger) error {
 	})
 	group.Go(func() error {
 		<-groupCtx.Done()
-		stop()
 		logger.Info("shutting down", "timeout", shutdownTimeout.String())
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
