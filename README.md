@@ -11,7 +11,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 0 | Project foundation: tooling, lint rules, coverage gate, live reload | Done |
 | 1 | User domain: entity, validation rules, domain errors | Done |
 | 2 | User registration: use case, MongoDB repository, bcrypt, `POST /api/v1/auth/register` | Done |
-| 3 | Login and JWT issuing | Planned |
+| 3 | Login and JWT issuing: `POST /api/v1/auth/login`, HS256 access tokens | Done |
 | 4 | JWT middleware | Planned |
 | 5 | Get user by ID | Planned |
 | 6 | List users | Planned |
@@ -42,7 +42,7 @@ These rules are enforced by `depguard` in [.golangci.yml](.golangci.yml), so `ma
 - `application` may import only the standard library and `domain`.
 - HTTP and gRPC adapters may not import the MongoDB driver or the repository adapter. They must go through use cases.
 
-How a registration request flows through the layers:
+How requests flow through the layers:
 
 ```text
 POST /api/v1/auth/register
@@ -51,6 +51,13 @@ POST /api/v1/auth/register
       ├─ PasswordHasher port → adapters/auth (bcrypt)
       └─ UserRepository port → adapters/repository/mongodb (unique email index)
   → domain/user              validation rules and normalization
+
+POST /api/v1/auth/login
+  → adapters/http            decode the body, map errors to status codes
+  → application/userservice  normalize the email, find the user, compare the password, issue a token
+      ├─ UserRepository port → adapters/repository/mongodb (FindByEmail)
+      ├─ PasswordHasher port → adapters/auth (bcrypt)
+      └─ TokenIssuer port    → adapters/auth (JWT HS256)
 ```
 
 ## User rules
@@ -85,7 +92,7 @@ Error messages name the field and the rule, never the submitted value, for examp
 │   ├── application/
 │   │   └── userservice/       # use cases and the ports they need
 │   ├── adapters/
-│   │   ├── auth/              # bcrypt password hasher
+│   │   ├── auth/              # bcrypt password hasher, JWT issuer
 │   │   ├── http/              # REST handlers, DTOs, error mapping
 │   │   └── repository/
 │   │       └── mongodb/       # UserRepository on MongoDB
@@ -111,8 +118,11 @@ Error messages name the field and the rule, never the submitted value, for examp
 | `MONGO_URI` | Yes | | MongoDB connection string |
 | `MONGO_DATABASE` | No | `user_management` | Database name |
 | `BCRYPT_COST` | No | `12` | bcrypt work factor, from 10 to 31 |
+| `JWT_SECRET` | Yes | | HMAC key for signing tokens, at least 32 bytes |
+| `JWT_ISSUER` | No | `user-management-api` | `iss` claim of issued tokens |
+| `JWT_TTL` | No | `1h` | Token lifetime, a Go duration such as `15m` or `1h` |
 
-Startup fails with a message listing every invalid variable. [.env.example](.env.example) holds working values for local development. Copy it to `.env`, which is git-ignored and loaded by `make dev`.
+Startup fails with a message listing every invalid variable. [.env.example](.env.example) holds working values for local development, except `JWT_SECRET`, which is left empty on purpose so no shared secret is ever used. Copy the file to `.env`, which is git-ignored and loaded by `make dev`.
 
 Integration tests read `MONGO_TEST_URI` instead (default `mongodb://localhost:27017`), so they can never pick up the application's database.
 
@@ -121,8 +131,11 @@ Integration tests read `MONGO_TEST_URI` instead (default `mongodb://localhost:27
 ```bash
 make db-up
 cp .env.example .env
+echo "JWT_SECRET=$(openssl rand -base64 48)" >> .env
 make dev
 ```
+
+The `echo` line generates a random 64-character secret. Without it, startup stops with `config: JWT_SECRET is required and must be at least 32 bytes`.
 
 `make db-up` starts MongoDB 8.0 on `127.0.0.1:27017` and waits until it is healthy. The API connects, creates the unique email index, and listens on `:8080`. Ctrl+C shuts it down gracefully. `make db-down` stops MongoDB and keeps its data in the `mongo-data` volume.
 
@@ -175,6 +188,59 @@ Response `409 Conflict` when the email is taken (compared after lowercasing):
 | 413 | `request_too_large` | Body larger than 1 MiB |
 | 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
 
+### POST /api/v1/auth/login
+
+Auth: none
+
+Exchanges an email and password for an access token. The email is trimmed and lowercased before the lookup, as at registration.
+
+Request:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"correct horse"}'
+```
+
+Response `200 OK`, with `Cache-Control: no-store`:
+
+```json
+{"access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ1c2VyLW1hbmFnZW1lbnQtYXBpIiwic3ViIjoiNmFmM2ZjZjkxOWE5MzZlNDk1MzM4NmFmIiwiZXhwIjoxNzk0Mzc4NTA1LCJpYXQiOjE3OTQzNzQ5MDV9.<signature>","token_type":"Bearer","expires_in":3600}
+```
+
+Response `401 Unauthorized` for an unknown email or a wrong password. Both get the same body:
+
+```json
+{"error":{"code":"invalid_credentials","message":"invalid email or password"}}
+```
+
+| Status | Code | When |
+|---|---|---|
+| 200 | | Credentials are valid |
+| 400 | `validation_failed` | `email` or `password` is empty |
+| 400 | `invalid_json` | Malformed JSON, unknown fields, wrong types, or more than one JSON value |
+| 401 | `invalid_credentials` | Unknown email or wrong password |
+| 413 | `request_too_large` | Body larger than 1 MiB |
+| 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
+
+## JWT
+
+Login returns an access token signed with HMAC-SHA256 (HS256) using `JWT_SECRET`. Decoded, the token from the example above is:
+
+```json
+{"alg":"HS256","typ":"JWT"}
+{"iss":"user-management-api","sub":"6af3fcf919a936e4953386af","exp":1794378505,"iat":1794374905}
+```
+
+| Claim | Meaning |
+|---|---|
+| `sub` | ID of the user who logged in |
+| `iss` | `JWT_ISSUER` |
+| `iat` | When the token was issued (Unix seconds) |
+| `exp` | When the token expires: `iat` plus `JWT_TTL` |
+
+`expires_in` in the login response is the token lifetime in seconds. There are no refresh tokens, so a client logs in again after the token expires. No endpoint requires the token yet; the JWT middleware that validates it is Phase 4.
+
 ## Development commands
 
 | Command | What it does |
@@ -192,8 +258,8 @@ Response `409 Conflict` when the email is taken (compared after lowercasing):
 | `make coverage-html` | Render `coverage.html` |
 | `make coverage-check` | Enforce the coverage thresholds below |
 | `make test-integration` | Run unit and integration tests (`-tags=integration`). Needs `make db-up`. |
-| `make vet` | Run `go vet` |
-| `make lint` | Run golangci-lint, including the architecture rules |
+| `make vet` | Run `go vet`, including integration test files |
+| `make lint` | Run golangci-lint, including the architecture rules and integration test files |
 | `make check` | Full gate: fmt-check → build → test → test-race → coverage-check → vet → lint |
 
 ## Testing and coverage
@@ -205,7 +271,7 @@ Tests use the standard `testing` package. Table-driven tests are the default sty
 | Domain | Real values only. The domain has no dependencies. |
 | Application | Ports replaced by generated mocks |
 | HTTP | `httptest` through the real router, with the use case replaced by a generated mock. Bodies are compared exactly, so a leaked field fails the test. |
-| bcrypt hasher, config | Real implementations |
+| bcrypt hasher, JWT issuer, config | Real implementations. Issued tokens are parsed back and their claims checked. |
 | MongoDB repository | Integration tests against a real MongoDB. Each test uses its own database and drops it afterwards. |
 
 Mocks are generated by [mockery](https://vektra.github.io/mockery/) v3.9.1 with the `matryer` template. Each mock is a plain struct with a function field per method that records its calls, and it imports only the standard library. Tests never use testify or gomock. The mocks live next to their interface as `mocks_test.go`, so they compile only for tests. Run `make mocks` after changing a mocked interface, and commit the result with the interface.
@@ -255,6 +321,12 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Internal errors never reach the client.** Unexpected errors are logged with the method and path, and the client receives only `internal_error`. Passwords and hashes are never logged, and responses never contain a hash.
 - **bcrypt cost defaults to 12.** Registration then takes about 230 ms on a laptop. `BCRYPT_COST` accepts 10 to 31, where 10 is the common minimum recommendation.
 - **Every MongoDB call has a timeout.** The client is created with a 5-second operation timeout, so a call without its own deadline cannot hang a request.
+- **Login failures look the same.** An unknown email and a wrong password both return `401 invalid_credentials`. For an unknown email, the service still runs a bcrypt comparison against a dummy hash, so the response time does not reveal which emails are registered. In a local run, both cases took about 0.22 s.
+- **Passwords over 72 bytes never match.** bcrypt's `CompareHashAndPassword` reads only the first 72 bytes, so a user with a 72-byte password could otherwise log in with that password plus any suffix. The hasher's `Compare` rejects longer passwords before calling bcrypt.
+- **The JWT secret has no default.** `JWT_SECRET` must be set and at least 32 bytes long, and `.env.example` leaves it empty. The JWT adapter also refuses a shorter key itself, because golang-jwt signs with an empty key without complaint.
+- **Only HS256 is issued, with minimal claims.** Tokens carry `sub`, `iss`, `iat` and `exp`, and nothing personal such as the email, because a JWT payload is readable by anyone who holds the token.
+- **Token responses are not cached.** The login response sends `Cache-Control: no-store`, as RFC 6749 requires for token responses.
+- **Login validates presence only.** An empty email or password is a `400`. Any other mismatch, including a malformed email, is a `401`, so login does not reveal the validation rules of stored accounts.
 - **Missing internal values are not validation errors.** The password hash and creation time come from the application layer, not the client. When one is missing, `New` returns a plain error, so it surfaces as an internal error instead of being blamed on the client's input.
 - **Creation time is stored in UTC at millisecond precision.** That is the precision MongoDB keeps, so a stored user reads back exactly as it was created.
 - **User IDs are opaque strings in the domain.** The repository generates ObjectIDs when it stores a user, and only the MongoDB adapter knows that type.
@@ -264,3 +336,6 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - The local MongoDB container has no authentication. It is published only on `127.0.0.1`.
 - Registration reveals whether an email is already registered (`409`). This comes with unique emails, and there is no rate limiting yet.
 - A duplicate registration is detected only after the password is hashed, so it still costs one bcrypt round.
+- There are no refresh tokens and no way to revoke a token before it expires. Keep `JWT_TTL` short.
+- Login has no rate limiting or lockout, so password guessing is limited only by bcrypt's cost.
+- The dummy hash for unknown-email logins is computed on the first such request after startup, so that one request takes about twice as long.
