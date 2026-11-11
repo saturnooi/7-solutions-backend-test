@@ -85,6 +85,37 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]user.Us
 	return users, nil
 }
 
+func (r *UserRepository) Update(ctx context.Context, id string, changes user.Changes) (user.User, error) {
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return user.User{}, fmt.Errorf("mongodb: update user: %w", user.ErrInvalidID)
+	}
+
+	set := bson.D{}
+	if changes.Name != nil {
+		set = append(set, bson.E{Key: "name", Value: *changes.Name})
+	}
+	if changes.Email != nil {
+		set = append(set, bson.E{Key: "email", Value: *changes.Email})
+	}
+
+	var doc userDocument
+	err = r.users.FindOneAndUpdate(ctx,
+		bson.D{{Key: "_id", Value: oid}},
+		bson.D{{Key: "$set", Value: set}},
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	).Decode(&doc)
+	switch {
+	case errors.Is(err, mongo.ErrNoDocuments):
+		return user.User{}, fmt.Errorf("mongodb: update user: %w", user.ErrNotFound)
+	case mongo.IsDuplicateKeyError(err):
+		return user.User{}, fmt.Errorf("mongodb: update user: %w", user.ErrEmailAlreadyExists)
+	case err != nil:
+		return user.User{}, fmt.Errorf("mongodb: update user: %w", err)
+	}
+	return doc.toDomain(), nil
+}
+
 func (r *UserRepository) findOne(ctx context.Context, operation string, filter bson.D) (user.User, error) {
 	var doc userDocument
 	err := r.users.FindOne(ctx, filter).Decode(&doc)
