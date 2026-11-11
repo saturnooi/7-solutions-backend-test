@@ -5,23 +5,28 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"user-management-api/internal/adapters/auth"
 	httpadapter "user-management-api/internal/adapters/http"
 	"user-management-api/internal/adapters/repository/mongodb"
+	"user-management-api/internal/adapters/worker"
 	"user-management-api/internal/application/userservice"
 	"user-management-api/internal/infrastructure/config"
 	"user-management-api/internal/infrastructure/database"
 )
 
 const (
-	mongoTimeout    = 5 * time.Second
-	shutdownTimeout = 10 * time.Second
+	mongoTimeout      = 5 * time.Second
+	shutdownTimeout   = 10 * time.Second
+	userCountInterval = 10 * time.Second
 )
 
 func main() {
@@ -65,7 +70,6 @@ func run(logger *slog.Logger) error {
 	}
 	service := userservice.New(users, auth.NewBcryptHasher(cfg.BcryptCost), tokens, time.Now)
 	server := &http.Server{
-		Addr:              cfg.HTTPAddr,
 		Handler:           httpadapter.NewHandler(service, userservice.NewAuthenticator(tokens, users), logger).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -74,25 +78,36 @@ func run(logger *slog.Logger) error {
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 
-	serveErr := make(chan error, 1)
-	go func() {
-		logger.Info("http server listening", "addr", cfg.HTTPAddr)
-		serveErr <- server.ListenAndServe()
-	}()
+	counter := worker.NewUserCountLogger(service, userCountInterval, logger)
 
-	select {
-	case err := <-serveErr:
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.HTTPAddr)
+	if err != nil {
 		return fmt.Errorf("http server: %w", err)
-	case <-ctx.Done():
-		stop()
 	}
+	logger.Info("http server listening", "addr", listener.Addr().String())
 
-	logger.Info("shutting down", "timeout", shutdownTimeout.String())
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("http server shutdown: %w", err)
-	}
-	logger.Info("http server stopped")
-	return nil
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("http server: %w", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
+		counter.Run(groupCtx)
+		return nil
+	})
+	group.Go(func() error {
+		<-groupCtx.Done()
+		stop()
+		logger.Info("shutting down", "timeout", shutdownTimeout.String())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("http server shutdown: %w", err)
+		}
+		logger.Info("http server stopped")
+		return nil
+	})
+	return group.Wait()
 }
