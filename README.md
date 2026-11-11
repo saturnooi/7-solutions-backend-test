@@ -16,7 +16,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 5 | Get user by ID: `GET /api/v1/users/{id}` | Done |
 | 6 | List users: `GET /api/v1/users` with limit/offset pagination | Done |
 | 7 | Update user: `PATCH /api/v1/users/{id}`, own account only | Done |
-| 8 | Delete user | Planned |
+| 8 | Delete user: `DELETE /api/v1/users/{id}`, own account only; tokens of deleted users stop working | Done |
 | 9 | HTTP logging middleware | Planned |
 | 10 | Background user-count worker | Planned |
 | 11 | gRPC (CreateUser, GetUser) | Planned |
@@ -59,10 +59,15 @@ POST /api/v1/auth/login
       ├─ PasswordHasher port → adapters/auth (bcrypt)
       └─ TokenIssuer port    → adapters/auth (JWT HS256)
 
+Every protected route
+  → adapters/http            requireAuth: read the bearer token
+  → application/userservice  Authenticator: verify the token, then check that its user still exists
+      ├─ TokenVerifier port  → adapters/auth (JWT HS256)
+      └─ UserFinder port     → adapters/repository/mongodb (FindByID)
+  → adapters/http            put the user ID in the request context and call the handler
+
 POST /api/v1/users
-  → adapters/http            requireAuth: read the bearer token, verify it, put the user ID in the request context
-      └─ TokenVerifier       → adapters/auth (JWT HS256)
-  → the same Register use case as /api/v1/auth/register
+  → requireAuth, then the same Register use case as /api/v1/auth/register
 
 GET /api/v1/users/{id}
   → adapters/http            requireAuth, then read {id} from the path
@@ -79,6 +84,11 @@ PATCH /api/v1/users/{id}
   → application/userservice  UpdateUser: caller must own the account (403), then build the changes
   → domain/user              NewChanges: normalize and validate only the fields that were sent
       └─ UserRepository port → adapters/repository/mongodb (FindOneAndUpdate with $set on those fields)
+
+DELETE /api/v1/users/{id}
+  → adapters/http            requireAuth, take the caller's ID from the token
+  → application/userservice  DeleteUser: caller must own the account (403)
+      └─ UserRepository port → adapters/repository/mongodb (DeleteOne; nothing deleted means 404)
 ```
 
 ## User rules
@@ -397,6 +407,39 @@ Response `400 Bad Request` for an empty update such as `{}`:
 
 Because the token's `sub` is the user ID, not the email, a token stays valid after its owner changes email. The next login uses the new email.
 
+### DELETE /api/v1/users/{id}
+
+Auth: `Authorization: Bearer <access_token>`, and `{id}` must be the caller's own ID (the token's `sub`).
+
+Deletes the caller's account. Every token issued to it stops working at once, because each protected request checks that the token's user still exists. The email becomes free to register again, and a new account gets a new ID, so old tokens never apply to it.
+
+Request:
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/users/6af40e79c3bde32d45044878
+```
+
+Response `204 No Content`, with an empty body.
+
+Response `403 Forbidden` when `{id}` is another user:
+
+```json
+{"error":{"code":"forbidden","message":"you may only change your own account"}}
+```
+
+After the delete, the same token gets `401`:
+
+```json
+{"error":{"code":"unauthorized","message":"a valid bearer token is required"}}
+```
+
+| Status | Code | When |
+|---|---|---|
+| 204 | | Deleted |
+| 401 | `unauthorized` | Token missing or rejected, including a token whose user is already deleted |
+| 403 | `forbidden` | `{id}` is not the caller's own ID |
+| 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
+
 ## JWT
 
 Login returns an access token signed with HMAC-SHA256 (HS256) using `JWT_SECRET`. Decoded, the token from the example above is:
@@ -438,8 +481,9 @@ The scheme name is case-insensitive (`Bearer` or `bearer`). A token is accepted 
 | `iat` is not in the future | Issued by a clock that runs ahead |
 | `iss` equals `JWT_ISSUER` | Token from another issuer |
 | `sub` is not empty | Token without a subject |
+| `sub` is the ID of an existing user | Token of a deleted account |
 
-`exp` and `iat` allow 5 seconds of clock difference between servers.
+`exp` and `iat` allow 5 seconds of clock difference between servers. The last check costs one lookup by `_id` per request.
 
 Every rejection returns the same `401` body, so a client cannot learn why a token failed:
 
@@ -447,7 +491,7 @@ Every rejection returns the same `401` body, so a client cannot learn why a toke
 {"error":{"code":"unauthorized","message":"a valid bearer token is required"}}
 ```
 
-The `WWW-Authenticate` header follows RFC 6750: `Bearer` when no token was sent, and `Bearer error="invalid_token"` when a token was sent but rejected. On success, the middleware stores the token's `sub` (the user ID) in the request context for the handler.
+The `WWW-Authenticate` header follows RFC 6750: `Bearer` when no token was sent, and `Bearer error="invalid_token"` when a token was sent but rejected. If the user lookup itself fails, for example while MongoDB is unreachable, the response is `500 internal_error` rather than `401`, so an outage does not look like every client being logged out. On success, the middleware stores the token's `sub` (the user ID) in the request context for the handler.
 
 ## Development commands
 
@@ -479,7 +523,7 @@ Tests use the standard `testing` package. Table-driven tests are the default sty
 | Domain | Real values only. The domain has no dependencies. |
 | Application | Ports replaced by generated mocks |
 | HTTP | `httptest` through the real router, with the use case replaced by a generated mock. Bodies are compared exactly, so a leaked field fails the test. |
-| JWT middleware | Header parsing with a mocked verifier, and end-to-end with the real JWT service: a valid, an expired, and a foreign-secret token |
+| Authentication | The `Authenticator` use case with mocked ports; header parsing with a mocked `Authenticator`; and end-to-end with the real JWT service and `Authenticator`: a valid token, an expired one, a foreign-secret one, and a valid token whose user was deleted |
 | bcrypt hasher, JWT issuer, config | Real implementations. Issued tokens are parsed back and their claims checked. |
 | MongoDB repository | Integration tests against a real MongoDB. Each test uses its own database and drops it afterwards. |
 
@@ -534,7 +578,8 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Passwords over 72 bytes never match.** bcrypt's `CompareHashAndPassword` reads only the first 72 bytes, so a user with a 72-byte password could otherwise log in with that password plus any suffix. The hasher's `Compare` rejects longer passwords before calling bcrypt.
 - **The JWT secret has no default.** `JWT_SECRET` must be set and at least 32 bytes long, and `.env.example` leaves it empty. The JWT adapter also refuses a shorter key itself, because golang-jwt signs with an empty key without complaint.
 - **Only HS256 is issued, with minimal claims.** Tokens carry `sub`, `iss`, `iat` and `exp`, and nothing personal such as the email, because a JWT payload is readable by anyone who holds the token.
-- **Token checks live in the JWT adapter, not in a use case.** Verifying a token is a transport concern. The middleware depends on a one-method `TokenVerifier` interface that the JWT adapter implements, the same way handlers depend on a small service interface. The gRPC interceptor will use the same `Verify`, so the rules exist once.
+- **Authentication is a use case.** A token counts only while its user exists, which is a business rule, not just a JWT check. `userservice.Authenticator` verifies the token through the `TokenVerifier` port (the JWT adapter) and looks the user up through the narrow `UserFinder` port. The HTTP middleware calls it, and the gRPC interceptor will too, so the rule exists once. The JWT adapter still owns every signature and claim check.
+- **Deleting an account revokes its tokens immediately.** The existence check costs one `_id` lookup per protected request, which keeps tokens stateless while closing the window a deleted user would otherwise have until `exp`. A failed lookup is a `500`, never a `401`, so a database outage does not log everyone out.
 - **The middleware lives in the HTTP adapter package.** A separate package would have to export or copy the JSON error helpers to return the same error shape.
 - **Rejections do not say why.** Missing, malformed, expired and forged tokens all get the same `401` body. Only the RFC 6750 `WWW-Authenticate` header separates "no token" from "bad token", which the client already knows.
 - **Clock leeway is 5 seconds.** That absorbs small clock differences between replicas without meaningfully extending a token's life.
@@ -556,8 +601,8 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - The local MongoDB container has no authentication. It is published only on `127.0.0.1`.
 - Registration reveals whether an email is already registered (`409`). This comes with unique emails, and there is no rate limiting yet.
 - A duplicate registration is detected only after the password is hashed, so it still costs one bcrypt round.
-- There are no refresh tokens and no way to revoke a token before it expires. Keep `JWT_TTL` short.
-- There are no roles. Any logged-in user may create users and read any user, but may change only their own account, and there is no administrator who can change others.
+- There are no refresh tokens and no logout. Apart from deleting the account, a token cannot be revoked before it expires. Keep `JWT_TTL` short.
+- There are no roles. Any logged-in user may create users and read any user, but may change or delete only their own account, and there is no administrator who can change or delete others.
 - A password cannot be changed after registration.
 - The user list has no total count. With offset pagination, a user created while a client is paging shifts later pages by one, so a client can see the same user twice. Large offsets also get slower, because MongoDB still walks the skipped entries. Cursor (keyset) pagination on `(created_at, _id)` would fix both.
 - Login has no rate limiting or lockout, so password guessing is limited only by bcrypt's cost.
