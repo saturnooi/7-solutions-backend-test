@@ -35,6 +35,8 @@ func validationError(checks ...FieldError) error {
 	return &ValidationError{Fields: failed}
 }
 
+var ErrEmailAlreadyExists = errors.New("user: email already exists")
+
 var (
 	errMissingPasswordHash = errors.New("user: password hash is required")
 	errMissingCreatedAt    = errors.New("user: creation time is required")
