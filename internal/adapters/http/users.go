@@ -9,6 +9,11 @@ import (
 	"user-management-api/internal/domain/user"
 )
 
+type updateUserRequest struct {
+	Name  *string `json:"name"`
+	Email *string `json:"email"`
+}
+
 type userListResponse struct {
 	Users  []userResponse `json:"users"`
 	Limit  int            `json:"limit"`
@@ -42,6 +47,25 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		users[i] = newUserResponse(u)
 	}
 	writeJSON(w, http.StatusOK, userListResponse{Users: users, Limit: page.Limit, Offset: page.Offset})
+}
+
+func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
+	var req updateUserRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+
+	callerID, _ := userIDFromContext(r.Context())
+	u, err := h.users.UpdateUser(r.Context(), callerID, r.PathValue("id"), userservice.UpdateInput{
+		Name:  req.Name,
+		Email: req.Email,
+	})
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, newUserResponse(u))
 }
 
 func parseListQuery(query url.Values) (userservice.ListInput, error) {

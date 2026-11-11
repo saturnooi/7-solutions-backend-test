@@ -67,6 +67,14 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, err 
 		writeError(w, http.StatusConflict, "email_already_exists", "email is already registered")
 		return
 	}
+	if errors.Is(err, user.ErrNoChanges) {
+		writeError(w, http.StatusBadRequest, "empty_update", "request must change name or email")
+		return
+	}
+	if errors.Is(err, userservice.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden", "you may only change your own account")
+		return
+	}
 	if errors.Is(err, user.ErrInvalidID) {
 		writeError(w, http.StatusBadRequest, "invalid_id", "id must be a 24-character hexadecimal string")
 		return
