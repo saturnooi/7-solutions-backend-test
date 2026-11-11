@@ -10,10 +10,12 @@ AIR_VERSION ?= v1.67.4
 AIR         ?= $(GO) run github.com/air-verse/air@$(AIR_VERSION)
 MOCKERY_VERSION ?= v3.9.1
 MOCKERY         ?= $(GO) run github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
+PROTOC_GEN_GO_VERSION      ?= v1.36.12
+PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev db-up db-down mocks fmt fmt-check build vet lint test test-race \
+.PHONY: help dev db-up db-down mocks proto fmt fmt-check build vet lint test test-race \
         test-coverage coverage-html coverage-check test-integration check clean
 
 help: ## Show available targets
@@ -30,6 +32,14 @@ db-down: ## Stop MongoDB (data stays in the mongo-data volume)
 
 mocks: ## Regenerate test mocks from .mockery.yml
 	$(MOCKERY)
+
+proto: ## Regenerate gRPC code in gen/ from proto/ (needs protoc)
+	GOBIN="$(CURDIR)/bin" $(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	GOBIN="$(CURDIR)/bin" $(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+	protoc --proto_path=proto \
+		--plugin=protoc-gen-go=bin/protoc-gen-go --go_out=. --go_opt=module=user-management-api \
+		--plugin=protoc-gen-go-grpc=bin/protoc-gen-go-grpc --go-grpc_out=. --go-grpc_opt=module=user-management-api \
+		user/v1/user.proto
 
 fmt: ## Format all Go files in place
 	gofmt -w .
