@@ -20,7 +20,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 9 | HTTP logging middleware: method, path, status, duration | Done |
 | 10 | Background worker: logs the user count every 10 seconds | Done |
 | 11 | gRPC: `CreateUser` and `GetUser`, token required | Done |
-| 12 | Docker and Docker Compose | Planned |
+| 12 | Docker and Docker Compose: API image, health checks, full stack | Done |
 | 13 | Integration tests | Planned |
 | 14 | Final quality gate | Planned |
 
@@ -119,11 +119,13 @@ Error messages name the field and the rule, never the submitted value, for examp
 ```text
 .
 ├── .air.toml                  # live-reload configuration for `make dev`
+├── .dockerignore              # keeps secrets, git data and build output out of the image build
+├── Dockerfile                 # multi-stage build into a distroless, non-root image
 ├── .env.example               # environment variables for local runs
 ├── .golangci.yml              # linters and architecture rules
 ├── .mockery.yml               # mock generation for `make mocks`
 ├── Makefile                   # development and quality-gate commands
-├── docker-compose.yml         # MongoDB for local runs and integration tests
+├── docker-compose.yml         # MongoDB and the API: `docker compose up --build`
 ├── go.mod
 ├── cmd/
 │   └── api/                   # composition root: config, wiring, graceful shutdown
@@ -153,7 +155,7 @@ Error messages name the field and the rule, never the submitted value, for examp
 ## Prerequisites
 
 - Go 1.26 or newer
-- Docker with Compose v2, for MongoDB
+- Docker with Compose v2, for MongoDB and for running the whole stack
 - [golangci-lint](https://golangci-lint.run/) v2
 - make
 - `protoc` only to regenerate the gRPC code (`brew install protobuf`). The generated code is committed, so building and testing do not need it.
@@ -188,6 +190,34 @@ The `echo` line generates a random 64-character secret. Without it, startup stop
 
 `make db-up` starts MongoDB 8.0 on `127.0.0.1:27017` and waits until it is healthy. The API connects, creates the unique email index, and listens on `:8080`. Ctrl+C shuts it down gracefully. `make db-down` stops MongoDB and keeps its data in the `mongo-data` volume.
 
+## Running with Docker
+
+The whole stack, the API and MongoDB, runs with Docker Compose. Only a JWT secret is needed, which Compose reads from `.env`:
+
+```bash
+echo "JWT_SECRET=$(openssl rand -base64 48)" >> .env
+docker compose up --build
+```
+
+`make up` does the same in the background and returns once both containers are healthy (about 13 seconds on a laptop). `make down` stops them.
+
+| Service | Image | Listens on | Notes |
+|---|---|---|---|
+| `api` | Built from [Dockerfile](Dockerfile), 17.8 MB | `127.0.0.1:8080` (HTTP), `127.0.0.1:9090` (gRPC) | Starts only after `mongo` is healthy. Runs as a non-root user. |
+| `mongo` | `mongo:8.0` | `127.0.0.1:27017` | Data in the named volume `mongo-data` |
+
+Inside the Compose network, the API reaches MongoDB at `mongodb://mongo:27017`. Compose sets `MONGO_URI`, `HTTP_ADDR` and `GRPC_ADDR` itself, and takes `JWT_SECRET`, `JWT_ISSUER`, `JWT_TTL`, `BCRYPT_COST` and `MONGO_DATABASE` from `.env` or the shell. Without a secret, the `api` container exits at once with:
+
+```json
+{"level":"ERROR","msg":"api stopped","error":"config: JWT_SECRET is required and must be at least 32 bytes"}
+```
+
+Data survives `docker compose down` and `up`. `docker compose down -v` deletes the volume and every user in it.
+
+### Health check
+
+The image's `HEALTHCHECK` runs `/api healthcheck` every 10 seconds. That mode of the same binary calls `GET /healthz`, and exits 0 for `200` and 1 otherwise, because the distroless image has no shell, curl or wget. `docker compose ps` then shows `(healthy)`. In a real run, stopping MongoDB under the running API turned it `unhealthy` with `/healthz` returning `503`, and starting MongoDB again turned it back to `healthy`.
+
 ## REST API
 
 All bodies are JSON. Errors share one shape:
@@ -195,6 +225,17 @@ All bodies are JSON. Errors share one shape:
 ```json
 {"error":{"code":"<machine-readable code>","message":"<human-readable message>"}}
 ```
+
+### GET /healthz
+
+Auth: none
+
+Reports whether the API can reach MongoDB. It pings with a 2-second limit and never returns the cause, which is logged as `health check failed`.
+
+| Status | Body | When |
+|---|---|---|
+| 200 | `{"status":"ok"}` | MongoDB answered the ping |
+| 503 | `{"status":"unavailable"}` | The ping failed or timed out |
 
 ### POST /api/v1/auth/register
 
@@ -611,6 +652,8 @@ If a count fails, the worker logs `count users failed` at `ERROR` with the cause
 3. The gRPC server does the same (`GracefulStop`). If calls are still running when the 10-second shutdown budget runs out, it is stopped hard (`Stop`).
 4. The MongoDB client disconnects, and the process exits with status 0.
 
+In Docker, `docker compose stop` or `down` sends `SIGTERM`, and Compose waits up to 15 seconds (`stop_grace_period`), longer than the 10-second budget above, before killing the container. In a real run the API stopped cleanly in about 1 second, with exit code 0.
+
 A second signal during shutdown terminates the process immediately. Both listeners are opened before anything starts. If either cannot start, for example because a port is taken, nothing else starts, the error is logged as `api stopped`, and the process exits with status 1:
 
 ```json
@@ -622,6 +665,8 @@ A second signal during shutdown terminates the process immediately. Both listene
 | Command | What it does |
 |---|---|
 | `make dev` | Run the API with live reload ([Air](https://github.com/air-verse/air)) |
+| `make up` | Build and start the API and MongoDB in Docker, and wait until both are healthy |
+| `make down` | Stop the API and MongoDB, keeping the data |
 | `make db-up` | Start MongoDB in Docker and wait until it is healthy |
 | `make db-down` | Stop MongoDB, keeping its data |
 | `make mocks` | Regenerate test mocks from [.mockery.yml](.mockery.yml) |
@@ -637,6 +682,7 @@ A second signal during shutdown terminates the process immediately. Both listene
 | `make test-integration` | Run unit and integration tests (`-tags=integration`). Needs `make db-up`. |
 | `make vet` | Run `go vet`, including integration test files |
 | `make lint` | Run golangci-lint, including the architecture rules and integration test files |
+| `make vuln` | Run [govulncheck](https://go.dev/blog/govulncheck) v1.9.0. It reports only vulnerabilities the code can actually reach. |
 | `make check` | Full gate: fmt-check → build → test → test-race → coverage-check → vet → lint |
 
 ## Testing and coverage
@@ -706,6 +752,12 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Passwords over 72 bytes never match.** bcrypt's `CompareHashAndPassword` reads only the first 72 bytes, so a user with a 72-byte password could otherwise log in with that password plus any suffix. The hasher's `Compare` rejects longer passwords before calling bcrypt.
 - **The JWT secret has no default.** `JWT_SECRET` must be set and at least 32 bytes long, and `.env.example` leaves it empty. The JWT adapter also refuses a shorter key itself, because golang-jwt signs with an empty key without complaint.
 - **Only HS256 is issued, with minimal claims.** Tokens carry `sub`, `iss`, `iat` and `exp`, and nothing personal such as the email, because a JWT payload is readable by anyone who holds the token.
+- **The runtime image is distroless and non-root.** A multi-stage build compiles a static binary (`CGO_ENABLED=0`, `-trimpath`) and copies only that binary into `gcr.io/distroless/static-debian12:nonroot`. The result is 17.8 MB, with no shell, no package manager and no root user.
+- **The binary checks its own health.** Distroless has no curl, so `/api healthcheck` performs the Docker health check. It calls `/healthz` on the configured HTTP address and relies on `net.Dial` treating `:8080` and `0.0.0.0:8080` as the local machine.
+- **The health check runs every 10 seconds.** Docker 24 runs the first check only after one interval (`--start-interval` needs Docker 25), so a 30-second interval made `docker compose up --wait` take 32 seconds. With 10 seconds it takes 13. Each check also appears in the request log.
+- **Compose does not refuse a missing secret; the API does.** `${JWT_SECRET:?...}` would stop Compose from parsing the file at all, which would also break `make db-up` and the integration tests for anyone without a `.env`. `${JWT_SECRET:-}` passes an empty value, and the API's own fail-fast check stops the container with a clear message.
+- **Published ports are bound to `127.0.0.1`.** A local `docker compose up` does not expose the API or MongoDB to the rest of the network.
+- **The Go toolchain is pinned to a patched release.** `go.mod` keeps `go 1.26.0` as the minimum, and `toolchain go1.26.11` makes the go command use 1.26.11 when the local Go is older (with the default `GOTOOLCHAIN=auto`). govulncheck found 19 standard-library vulnerabilities reachable from this code under go1.26.5, and none under go1.26.11. The Docker build already uses 1.26.11. `golang.org/x/net` was raised to v0.62.0 for two advisories in its `html` package.
 - **gRPC is a second front door, not a second implementation.** The gRPC adapter calls the same `Register` and `GetUser` use cases and the same `Authenticator` as HTTP, so validation, uniqueness and token rules exist once. It only maps requests to inputs, users to messages, and errors to status codes.
 - **Both RPCs require a token,** matching their REST counterparts. Ambiguous metadata (two `authorization` values) is rejected instead of picking one.
 - **Generated code is committed.** `gen/` is reproducible with `make proto`, but committing it means building, testing and running never need `protoc`. Plugin versions are pinned in the Makefile and installed into the project's `bin/`, not globally.
@@ -737,6 +789,8 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 
 - The local MongoDB container has no authentication. It is published only on `127.0.0.1`.
 - HTTP and gRPC are served without TLS. In production, TLS is expected to end at a load balancer or proxy in front of the API.
+- govulncheck still lists one advisory at module level: `golang.org/x/crypto/openpgp` is unmaintained (GO-2026-5932). This code uses only `bcrypt` from that module and never calls `openpgp`, and no tagged release of `x/crypto` fixes it yet.
+- A machine with `GOTOOLCHAIN=local` ignores the `toolchain` line, so a Go older than 1.26.11 should be upgraded by hand before running the API locally.
 - gRPC calls are not written to the request log. Failed calls are logged as `rpc failed`, but there is no per-call line like the HTTP `http request` line.
 - Registration reveals whether an email is already registered (`409`). This comes with unique emails, and there is no rate limiting yet.
 - A duplicate registration is detected only after the password is hashed, so it still costs one bcrypt round.
