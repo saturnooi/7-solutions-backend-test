@@ -16,7 +16,7 @@ GOVULNCHECK_VERSION        ?= v1.9.0
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev db-up db-down mocks proto fmt fmt-check build vet lint vuln test test-race \
+.PHONY: help dev up down db-up db-down mocks proto fmt fmt-check build vet lint vuln test test-race \
         test-coverage coverage-html coverage-check test-integration check clean
 
 help: ## Show available targets
@@ -24,6 +24,12 @@ help: ## Show available targets
 
 dev: ## Run the API with live reload (Air, config in .air.toml)
 	$(AIR) -c .air.toml
+
+up: ## Build and start the API and MongoDB in Docker, waiting until both are healthy
+	docker compose up --build -d --wait
+
+down: ## Stop the API and MongoDB (data stays in the mongo-data volume)
+	docker compose down
 
 db-up: ## Start MongoDB in Docker and wait until it is healthy
 	docker compose up -d --wait mongo
