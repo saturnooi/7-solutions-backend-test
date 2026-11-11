@@ -454,6 +454,90 @@ func TestUserRepository_Update(t *testing.T) {
 	}
 }
 
+func TestUserRepository_Delete(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		target      func(alice user.User) string
+		deleteTwice bool
+		cancelled   bool
+		wantErr     error
+		wantRemoved bool
+	}{
+		{name: "existing user", wantRemoved: true},
+		{name: "second delete of the same user", deleteTwice: true, wantErr: user.ErrNotFound, wantRemoved: true},
+		{name: "unknown id", target: func(user.User) string { return bson.NewObjectID().Hex() }, wantErr: user.ErrNotFound},
+		{name: "malformed id is rejected before querying", target: func(user.User) string { return "not-an-id" }, cancelled: true, wantErr: user.ErrInvalidID},
+		{name: "cancelled context", cancelled: true, wantErr: context.Canceled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo, _ := newTestRepository(t)
+			alice, err := repo.Create(t.Context(), newTestUser(t, "alice@example.com"))
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			bob, err := repo.Create(t.Context(), newTestUser(t, "bob@example.com"))
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			target := alice.ID
+			if tt.target != nil {
+				target = tt.target(alice)
+			}
+			if tt.deleteTwice {
+				if err := repo.Delete(t.Context(), target); err != nil {
+					t.Fatalf("first Delete() error = %v", err)
+				}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+
+			err = repo.Delete(ctx, target)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Delete() error = %v, want %v", err, tt.wantErr)
+			}
+			_, findErr := repo.FindByID(t.Context(), alice.ID)
+			if removed := errors.Is(findErr, user.ErrNotFound); removed != tt.wantRemoved {
+				t.Errorf("alice removed = %v, want %v (FindByID error %v)", removed, tt.wantRemoved, findErr)
+			}
+			if _, err := repo.FindByID(t.Context(), bob.ID); err != nil {
+				t.Errorf("bob was affected: FindByID() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestUserRepository_Delete_FreesTheEmail(t *testing.T) {
+	t.Parallel()
+
+	repo, _ := newTestRepository(t)
+	alice, err := repo.Create(t.Context(), newTestUser(t, "alice@example.com"))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := repo.Delete(t.Context(), alice.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	again, err := repo.Create(t.Context(), newTestUser(t, "alice@example.com"))
+
+	if err != nil {
+		t.Fatalf("Create() after delete error = %v, want the email to be free again", err)
+	}
+	if again.ID == alice.ID {
+		t.Errorf("new account reused the deleted ID %q", alice.ID)
+	}
+}
+
 func TestUserRepository_EnsureIndexes(t *testing.T) {
 	t.Parallel()
 
