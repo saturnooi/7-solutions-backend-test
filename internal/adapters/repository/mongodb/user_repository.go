@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -42,6 +43,18 @@ func (r *UserRepository) Create(ctx context.Context, u user.User) (user.User, er
 			return user.User{}, fmt.Errorf("mongodb: create user: %w", user.ErrEmailAlreadyExists)
 		}
 		return user.User{}, fmt.Errorf("mongodb: create user: %w", err)
+	}
+	return doc.toDomain(), nil
+}
+
+func (r *UserRepository) FindByEmail(ctx context.Context, email string) (user.User, error) {
+	var doc userDocument
+	err := r.users.FindOne(ctx, bson.D{{Key: "email", Value: email}}).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return user.User{}, fmt.Errorf("mongodb: find user by email: %w", user.ErrNotFound)
+	}
+	if err != nil {
+		return user.User{}, fmt.Errorf("mongodb: find user by email: %w", err)
 	}
 	return doc.toDomain(), nil
 }
