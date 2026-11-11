@@ -115,6 +115,60 @@ func TestUserRepository_Create_ReportsDatabaseErrors(t *testing.T) {
 	}
 }
 
+func TestUserRepository_FindByEmail(t *testing.T) {
+	t.Parallel()
+
+	repo, _ := newTestRepository(t)
+	created, err := repo.Create(t.Context(), newTestUser(t, "alice@example.com"))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := repo.Create(t.Context(), newTestUser(t, "bob@example.com")); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		email     string
+		cancelled bool
+		want      user.User
+		wantErr   error
+	}{
+		{name: "stored email", email: "alice@example.com", want: created},
+		{name: "unknown email", email: "carol@example.com", wantErr: user.ErrNotFound},
+		{name: "lookup is exact because callers normalize", email: "Alice@example.com", wantErr: user.ErrNotFound},
+		{name: "cancelled context", email: "alice@example.com", cancelled: true, wantErr: context.Canceled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+
+			got, err := repo.FindByEmail(ctx, tt.email)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("FindByEmail() error = %v, want %v", err, tt.wantErr)
+			}
+			if errors.Is(tt.wantErr, context.Canceled) && errors.Is(err, user.ErrNotFound) {
+				t.Errorf("FindByEmail() error = %v, must not be reported as not found", err)
+			}
+			if got.ID != tt.want.ID || got.Name != tt.want.Name || got.Email != tt.want.Email ||
+				got.PasswordHash != tt.want.PasswordHash || !got.CreatedAt.Equal(tt.want.CreatedAt) {
+				t.Errorf("FindByEmail() = %+v, want %+v", got, tt.want)
+			}
+			if tt.wantErr == nil && got.CreatedAt.Location() != time.UTC {
+				t.Errorf("CreatedAt location = %v, want UTC", got.CreatedAt.Location())
+			}
+		})
+	}
+}
+
 func TestUserRepository_EnsureIndexes(t *testing.T) {
 	t.Parallel()
 
