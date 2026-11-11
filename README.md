@@ -18,7 +18,7 @@ The project is built one feature at a time. Each feature must pass the full qual
 | 7 | Update user: `PATCH /api/v1/users/{id}`, own account only | Done |
 | 8 | Delete user: `DELETE /api/v1/users/{id}`, own account only; tokens of deleted users stop working | Done |
 | 9 | HTTP logging middleware: method, path, status, duration | Done |
-| 10 | Background user-count worker | Planned |
+| 10 | Background worker: logs the user count every 10 seconds | Done |
 | 11 | gRPC (CreateUser, GetUser) | Planned |
 | 12 | Docker and Docker Compose | Planned |
 | 13 | Integration tests | Planned |
@@ -40,7 +40,7 @@ These rules are enforced by `depguard` in [.golangci.yml](.golangci.yml), so `ma
 
 - `domain` may import only the standard library, and not `net/http` or `database/sql`.
 - `application` may import only the standard library and `domain`.
-- HTTP and gRPC adapters may not import the MongoDB driver or the repository adapter. They must go through use cases.
+- HTTP, gRPC and worker adapters may not import the MongoDB driver or the repository adapter. They must go through use cases.
 
 How requests flow through the layers:
 
@@ -89,6 +89,11 @@ DELETE /api/v1/users/{id}
   → adapters/http            requireAuth, take the caller's ID from the token
   → application/userservice  DeleteUser: caller must own the account (403)
       └─ UserRepository port → adapters/repository/mongodb (DeleteOne; nothing deleted means 404)
+
+Every 10 seconds
+  → adapters/worker          UserCountLogger: a ticker, stopped by the shutdown context
+  → application/userservice  CountUsers
+      └─ UserRepository port → adapters/repository/mongodb (CountDocuments)
 ```
 
 ## User rules
@@ -125,8 +130,9 @@ Error messages name the field and the rule, never the submitted value, for examp
 │   ├── adapters/
 │   │   ├── auth/              # bcrypt password hasher, JWT issuer
 │   │   ├── http/              # REST handlers, DTOs, error mapping, auth and logging middleware
-│   │   └── repository/
-│   │       └── mongodb/       # UserRepository on MongoDB
+│   │   ├── repository/
+│   │   │   └── mongodb/       # UserRepository on MongoDB
+│   │   └── worker/            # background user-count logger
 │   └── infrastructure/
 │       ├── config/            # environment variables
 │       └── database/          # MongoDB connection
@@ -515,6 +521,33 @@ Request logs never include headers (so never the `Authorization` token), request
 
 When a request fails with `500`, a separate `ERROR` line named `request failed` records the real cause. The client only ever sees `internal_error`.
 
+## Background worker
+
+A goroutine started with the server logs the total number of users every 10 seconds. The first count comes 10 seconds after startup. Lines from a real run, where a second user registered between the two ticks:
+
+```json
+{"time":"2026-11-11T14:08:35.982431+07:00","level":"INFO","msg":"user count worker started","interval":"10s"}
+{"time":"2026-11-11T14:08:45.989328+07:00","level":"INFO","msg":"user count","count":1}
+{"time":"2026-11-11T14:08:55.987998+07:00","level":"INFO","msg":"user count","count":2}
+{"time":"2026-11-11T14:08:56.114131+07:00","level":"INFO","msg":"user count worker stopped"}
+```
+
+If a count fails, the worker logs `count users failed` at `ERROR` with the cause and tries again at the next tick, so it never stops the API. A count interrupted by shutdown is not logged as an error.
+
+## Graceful shutdown
+
+`main` runs the HTTP server and the worker in one `errgroup`, tied to a context that `SIGINT` (Ctrl+C) or `SIGTERM` cancels. On a signal:
+
+1. The worker stops at its next select and logs `user count worker stopped`.
+2. The server stops accepting connections and waits up to 10 seconds for in-flight requests (`http.Server.Shutdown`).
+3. The MongoDB client disconnects, and the process exits with status 0.
+
+A second signal during shutdown terminates the process immediately. If the server cannot start, for example because the port is taken, the listener fails before the worker starts, the error is logged as `api stopped`, and the process exits with status 1:
+
+```json
+{"time":"2026-11-11T14:09:47.782428+07:00","level":"ERROR","msg":"api stopped","error":"http server: listen tcp 127.0.0.1:8080: bind: address already in use"}
+```
+
 ## Development commands
 
 | Command | What it does |
@@ -545,6 +578,7 @@ Tests use the standard `testing` package. Table-driven tests are the default sty
 | Domain | Real values only. The domain has no dependencies. |
 | Application | Ports replaced by generated mocks |
 | HTTP | `httptest` through the real router, with the use case replaced by a generated mock. Bodies are compared exactly, so a leaked field fails the test. |
+| Worker | `testing/synctest`, so the 10-second ticker runs on a fake clock: 35 simulated seconds take no real time. Covers counts per tick, nothing before the first tick, recovery after a failed count, a count cut short by shutdown, and a 1-minute fake-clock bound that fails fast if `Run` ignores cancellation. |
 | Logging middleware | Status capture with small stub handlers, the full router for wiring, and `testing/synctest` for the duration: a handler that sleeps 150 ms on the fake clock must log exactly `150`, with no real waiting |
 | Authentication | The `Authenticator` use case with mocked ports; header parsing with a mocked `Authenticator`; and end-to-end with the real JWT service and `Authenticator`: a valid token, an expired one, a foreign-secret one, and a valid token whose user was deleted |
 | bcrypt hasher, JWT issuer, config | Real implementations. Issued tokens are parsed back and their claims checked. |
@@ -601,6 +635,9 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - **Passwords over 72 bytes never match.** bcrypt's `CompareHashAndPassword` reads only the first 72 bytes, so a user with a 72-byte password could otherwise log in with that password plus any suffix. The hasher's `Compare` rejects longer passwords before calling bcrypt.
 - **The JWT secret has no default.** `JWT_SECRET` must be set and at least 32 bytes long, and `.env.example` leaves it empty. The JWT adapter also refuses a shorter key itself, because golang-jwt signs with an empty key without complaint.
 - **Only HS256 is issued, with minimal claims.** Tokens carry `sub`, `iss`, `iat` and `exp`, and nothing personal such as the email, because a JWT payload is readable by anyone who holds the token.
+- **The worker is a driving adapter.** Like the HTTP handlers, it calls a use case (`CountUsers`) through a one-method interface it declares, and depguard stops it from reaching the repository directly. The use case does not know a ticker exists.
+- **One errgroup owns the long-running parts.** The server, the worker and the shutdown step share one cancellable context, so a signal or a server failure stops everything, and `main` returns the first real error. The listener is opened before anything starts, so `http server listening` is logged only once the port is actually bound.
+- **The worker never takes the API down.** A failed count is logged and retried at the next tick. Errors caused by shutdown cancelling an in-flight count are expected, so they are not logged as errors.
 - **Request logging wraps the whole router.** It sits outside routing and authentication, so it also records requests that never reach a handler: unknown paths, wrong methods, rejected tokens. Request lines are always `INFO`. The cause of a `500` is logged once at `ERROR` where it happens, not repeated by the request logger.
 - **The status recorder keeps the writer's other features.** The wrapper records the first status, or `200` once a body is written, matching what `net/http` sends. It implements `Unwrap`, so `http.ResponseController` can still reach the real writer (for example to flush).
 - **Authentication is a use case.** A token counts only while its user exists, which is a business rule, not just a JWT check. `userservice.Authenticator` verifies the token through the `TokenVerifier` port (the JWT adapter) and looks the user up through the narrow `UserFinder` port. The HTTP middleware calls it, and the gRPC interceptor will too, so the rule exists once. The JWT adapter still owns every signature and claim check.
@@ -629,6 +666,7 @@ Because of these exclusions, the gate's `OVERALL` figure can differ from the `to
 - There are no refresh tokens and no logout. Apart from deleting the account, a token cannot be revoked before it expires. Keep `JWT_TTL` short.
 - There are no roles. Any logged-in user may create users and read any user, but may change or delete only their own account, and there is no administrator who can change or delete others.
 - A password cannot be changed after registration.
+- The worker uses `CountDocuments`, which scans the `_id` index. That is exact and cheap at this scale. For a very large collection, `EstimatedDocumentCount` would be faster but approximate.
 - The user list has no total count. With offset pagination, a user created while a client is paging shifts later pages by one, so a client can see the same user twice. Large offsets also get slower, because MongoDB still walks the skipped entries. Cursor (keyset) pagination on `(created_at, _id)` would fix both.
 - Login has no rate limiting or lockout, so password guessing is limited only by bcrypt's cost.
 - The dummy hash for unknown-email logins is computed on the first such request after startup, so that one request takes about twice as long.
