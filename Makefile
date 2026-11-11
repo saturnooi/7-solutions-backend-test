@@ -11,14 +11,20 @@ AIR         ?= $(GO) run github.com/air-verse/air@$(AIR_VERSION)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev fmt fmt-check build vet lint test test-race test-coverage \
-        coverage-html coverage-check test-integration check clean
+.PHONY: help dev db-up db-down fmt fmt-check build vet lint test test-race \
+        test-coverage coverage-html coverage-check test-integration check clean
 
 help: ## Show available targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-zA-Z_-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' Makefile
 
 dev: ## Run the API with live reload (Air, config in .air.toml)
 	$(AIR) -c .air.toml
+
+db-up: ## Start MongoDB in Docker and wait until it is healthy
+	docker compose up -d --wait mongo
+
+db-down: ## Stop MongoDB (data stays in the mongo-data volume)
+	docker compose down
 
 fmt: ## Format all Go files in place
 	gofmt -w .
