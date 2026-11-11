@@ -131,6 +131,14 @@ func (r *UserRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (r *UserRepository) Count(ctx context.Context) (int64, error) {
+	count, err := r.users.CountDocuments(ctx, bson.D{})
+	if err != nil {
+		return 0, fmt.Errorf("mongodb: count users: %w", err)
+	}
+	return count, nil
+}
+
 func parseID(operation, id string) (bson.ObjectID, error) {
 	oid, err := bson.ObjectIDFromHex(id)
 	if err != nil {
