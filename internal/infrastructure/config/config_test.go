@@ -152,6 +152,29 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestHTTPAddr(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{name: "default", env: map[string]string{}, want: ":8080"},
+		{name: "set", env: map[string]string{"HTTP_ADDR": "127.0.0.1:9000"}, want: "127.0.0.1:9000"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := HTTPAddr(func(key string) string { return tt.env[key] }); got != tt.want {
+				t.Errorf("HTTPAddr() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoad_ErrorsNeverContainTheSecret(t *testing.T) {
 	t.Parallel()
 
