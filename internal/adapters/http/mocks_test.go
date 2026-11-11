@@ -94,6 +94,9 @@ var _ UserService = &UserServiceMock{}
 //
 //		// make and configure a mocked UserService
 //		mockedUserService := &UserServiceMock{
+//			DeleteUserFunc: func(ctx context.Context, callerID string, id string) error {
+//				panic("mock out the DeleteUser method")
+//			},
 //			GetUserFunc: func(ctx context.Context, id string) (user.User, error) {
 //				panic("mock out the GetUser method")
 //			},
@@ -116,6 +119,9 @@ var _ UserService = &UserServiceMock{}
 //
 //	}
 type UserServiceMock struct {
+	// DeleteUserFunc mocks the DeleteUser method.
+	DeleteUserFunc func(ctx context.Context, callerID string, id string) error
+
 	// GetUserFunc mocks the GetUser method.
 	GetUserFunc func(ctx context.Context, id string) (user.User, error)
 
@@ -133,6 +139,15 @@ type UserServiceMock struct {
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// DeleteUser holds details about calls to the DeleteUser method.
+		DeleteUser []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// CallerID is the callerID argument value.
+			CallerID string
+			// ID is the id argument value.
+			ID string
+		}
 		// GetUser holds details about calls to the GetUser method.
 		GetUser []struct {
 			// Ctx is the ctx argument value.
@@ -173,11 +188,52 @@ type UserServiceMock struct {
 			In userservice.UpdateInput
 		}
 	}
+	lockDeleteUser sync.RWMutex
 	lockGetUser    sync.RWMutex
 	lockListUsers  sync.RWMutex
 	lockLogin      sync.RWMutex
 	lockRegister   sync.RWMutex
 	lockUpdateUser sync.RWMutex
+}
+
+// DeleteUser calls DeleteUserFunc.
+func (mock *UserServiceMock) DeleteUser(ctx context.Context, callerID string, id string) error {
+	if mock.DeleteUserFunc == nil {
+		panic("UserServiceMock.DeleteUserFunc: method is nil but UserService.DeleteUser was just called")
+	}
+	callInfo := struct {
+		Ctx      context.Context
+		CallerID string
+		ID       string
+	}{
+		Ctx:      ctx,
+		CallerID: callerID,
+		ID:       id,
+	}
+	mock.lockDeleteUser.Lock()
+	mock.calls.DeleteUser = append(mock.calls.DeleteUser, callInfo)
+	mock.lockDeleteUser.Unlock()
+	return mock.DeleteUserFunc(ctx, callerID, id)
+}
+
+// DeleteUserCalls gets all the calls that were made to DeleteUser.
+// Check the length with:
+//
+//	len(mockedUserService.DeleteUserCalls())
+func (mock *UserServiceMock) DeleteUserCalls() []struct {
+	Ctx      context.Context
+	CallerID string
+	ID       string
+} {
+	var calls []struct {
+		Ctx      context.Context
+		CallerID string
+		ID       string
+	}
+	mock.lockDeleteUser.RLock()
+	calls = mock.calls.DeleteUser
+	mock.lockDeleteUser.RUnlock()
+	return calls
 }
 
 // GetUser calls GetUserFunc.

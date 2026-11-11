@@ -68,6 +68,15 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newUserResponse(u))
 }
 
+func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
+	callerID, _ := userIDFromContext(r.Context())
+	if err := h.users.DeleteUser(r.Context(), callerID, r.PathValue("id")); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func parseListQuery(query url.Values) (userservice.ListInput, error) {
 	in := userservice.ListInput{Limit: userservice.DefaultPageSize}
 	var fields []user.FieldError

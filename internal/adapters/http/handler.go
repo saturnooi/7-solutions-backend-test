@@ -15,6 +15,7 @@ type UserService interface {
 	GetUser(ctx context.Context, id string) (user.User, error)
 	ListUsers(ctx context.Context, in userservice.ListInput) (userservice.UserPage, error)
 	UpdateUser(ctx context.Context, callerID, id string, in userservice.UpdateInput) (user.User, error)
+	DeleteUser(ctx context.Context, callerID, id string) error
 }
 
 type Handler struct {
@@ -35,5 +36,6 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/users", h.requireAuth(http.HandlerFunc(h.listUsers)))
 	mux.Handle("GET /api/v1/users/{id}", h.requireAuth(http.HandlerFunc(h.getUser)))
 	mux.Handle("PATCH /api/v1/users/{id}", h.requireAuth(http.HandlerFunc(h.updateUser)))
+	mux.Handle("DELETE /api/v1/users/{id}", h.requireAuth(http.HandlerFunc(h.deleteUser)))
 	return mux
 }
