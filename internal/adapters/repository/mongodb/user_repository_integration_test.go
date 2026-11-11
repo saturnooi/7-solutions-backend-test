@@ -336,6 +336,124 @@ func TestUserRepository_List_ReportsDatabaseErrors(t *testing.T) {
 	}
 }
 
+func TestUserRepository_Update(t *testing.T) {
+	t.Parallel()
+
+	ptr := func(s string) *string { return &s }
+
+	tests := []struct {
+		name      string
+		target    func(alice user.User) string
+		changes   user.Changes
+		cancelled bool
+		wantName  string
+		wantEmail string
+		wantErr   error
+	}{
+		{
+			name:      "name only",
+			changes:   user.Changes{Name: ptr("Alice Cooper")},
+			wantName:  "Alice Cooper",
+			wantEmail: "alice@example.com",
+		},
+		{
+			name:      "email only",
+			changes:   user.Changes{Email: ptr("alice@new.example.com")},
+			wantName:  "Alice Smith",
+			wantEmail: "alice@new.example.com",
+		},
+		{
+			name:      "both fields",
+			changes:   user.Changes{Name: ptr("Alice Cooper"), Email: ptr("alice@new.example.com")},
+			wantName:  "Alice Cooper",
+			wantEmail: "alice@new.example.com",
+		},
+		{
+			name:      "keeping the current email is not a conflict",
+			changes:   user.Changes{Email: ptr("alice@example.com")},
+			wantName:  "Alice Smith",
+			wantEmail: "alice@example.com",
+		},
+		{
+			name:    "email taken by another user",
+			changes: user.Changes{Email: ptr("bob@example.com")},
+			wantErr: user.ErrEmailAlreadyExists,
+		},
+		{
+			name:    "unknown id",
+			target:  func(user.User) string { return bson.NewObjectID().Hex() },
+			changes: user.Changes{Name: ptr("Ghost")},
+			wantErr: user.ErrNotFound,
+		},
+		{
+			name:      "malformed id is rejected before querying",
+			target:    func(user.User) string { return "not-an-id" },
+			changes:   user.Changes{Name: ptr("Ghost")},
+			cancelled: true,
+			wantErr:   user.ErrInvalidID,
+		},
+		{
+			name:      "cancelled context",
+			changes:   user.Changes{Name: ptr("Alice Cooper")},
+			cancelled: true,
+			wantErr:   context.Canceled,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo, _ := newTestRepository(t)
+			alice, err := repo.Create(t.Context(), newTestUser(t, "alice@example.com"))
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			if _, err := repo.Create(t.Context(), newTestUser(t, "bob@example.com")); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			target := alice.ID
+			if tt.target != nil {
+				target = tt.target(alice)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+
+			got, err := repo.Update(ctx, target, tt.changes)
+
+			stored, findErr := repo.FindByID(t.Context(), alice.ID)
+			if findErr != nil {
+				t.Fatalf("FindByID() error = %v", findErr)
+			}
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("Update() error = %v, want %v", err, tt.wantErr)
+				}
+				if got != (user.User{}) {
+					t.Errorf("Update() = %+v, want the zero User on error", got)
+				}
+				if stored.Name != alice.Name || stored.Email != alice.Email {
+					t.Errorf("stored user changed to %+v after a failed update", stored)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Update() error = %v, want nil", err)
+			}
+			for label, u := range map[string]user.User{"returned": got, "stored": stored} {
+				if u.ID != alice.ID || u.Name != tt.wantName || u.Email != tt.wantEmail ||
+					u.PasswordHash != alice.PasswordHash || !u.CreatedAt.Equal(alice.CreatedAt) {
+					t.Errorf("%s user = %+v, want name %q, email %q and every other field unchanged from %+v",
+						label, u, tt.wantName, tt.wantEmail, alice)
+				}
+			}
+		})
+	}
+}
+
 func TestUserRepository_EnsureIndexes(t *testing.T) {
 	t.Parallel()
 
