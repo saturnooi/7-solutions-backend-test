@@ -538,6 +538,49 @@ func TestUserRepository_Delete_FreesTheEmail(t *testing.T) {
 	}
 }
 
+func TestUserRepository_Count(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		users     int
+		cancelled bool
+		want      int64
+		wantErr   error
+	}{
+		{name: "empty collection", users: 0, want: 0},
+		{name: "three users", users: 3, want: 3},
+		{name: "cancelled context", users: 1, cancelled: true, wantErr: context.Canceled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo, _ := newTestRepository(t)
+			for i := range tt.users {
+				if _, err := repo.Create(t.Context(), newTestUser(t, fmt.Sprintf("user%d@example.com", i))); err != nil {
+					t.Fatalf("Create() error = %v", err)
+				}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+
+			got, err := repo.Count(ctx)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Count() error = %v, want %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("Count() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUserRepository_EnsureIndexes(t *testing.T) {
 	t.Parallel()
 
