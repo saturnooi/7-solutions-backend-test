@@ -33,6 +33,9 @@ var _ UserRepository = &UserRepositoryMock{}
 //			ListFunc: func(ctx context.Context, limit int, offset int) ([]user.User, error) {
 //				panic("mock out the List method")
 //			},
+//			UpdateFunc: func(ctx context.Context, id string, changes user.Changes) (user.User, error) {
+//				panic("mock out the Update method")
+//			},
 //		}
 //
 //		// use mockedUserRepository in code that requires UserRepository
@@ -51,6 +54,9 @@ type UserRepositoryMock struct {
 
 	// ListFunc mocks the List method.
 	ListFunc func(ctx context.Context, limit int, offset int) ([]user.User, error)
+
+	// UpdateFunc mocks the Update method.
+	UpdateFunc func(ctx context.Context, id string, changes user.Changes) (user.User, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -84,11 +90,21 @@ type UserRepositoryMock struct {
 			// Offset is the offset argument value.
 			Offset int
 		}
+		// Update holds details about calls to the Update method.
+		Update []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ID is the id argument value.
+			ID string
+			// Changes is the changes argument value.
+			Changes user.Changes
+		}
 	}
 	lockCreate      sync.RWMutex
 	lockFindByEmail sync.RWMutex
 	lockFindByID    sync.RWMutex
 	lockList        sync.RWMutex
+	lockUpdate      sync.RWMutex
 }
 
 // Create calls CreateFunc.
@@ -236,6 +252,46 @@ func (mock *UserRepositoryMock) ListCalls() []struct {
 	mock.lockList.RLock()
 	calls = mock.calls.List
 	mock.lockList.RUnlock()
+	return calls
+}
+
+// Update calls UpdateFunc.
+func (mock *UserRepositoryMock) Update(ctx context.Context, id string, changes user.Changes) (user.User, error) {
+	if mock.UpdateFunc == nil {
+		panic("UserRepositoryMock.UpdateFunc: method is nil but UserRepository.Update was just called")
+	}
+	callInfo := struct {
+		Ctx     context.Context
+		ID      string
+		Changes user.Changes
+	}{
+		Ctx:     ctx,
+		ID:      id,
+		Changes: changes,
+	}
+	mock.lockUpdate.Lock()
+	mock.calls.Update = append(mock.calls.Update, callInfo)
+	mock.lockUpdate.Unlock()
+	return mock.UpdateFunc(ctx, id, changes)
+}
+
+// UpdateCalls gets all the calls that were made to Update.
+// Check the length with:
+//
+//	len(mockedUserRepository.UpdateCalls())
+func (mock *UserRepositoryMock) UpdateCalls() []struct {
+	Ctx     context.Context
+	ID      string
+	Changes user.Changes
+} {
+	var calls []struct {
+		Ctx     context.Context
+		ID      string
+		Changes user.Changes
+	}
+	mock.lockUpdate.RLock()
+	calls = mock.calls.Update
+	mock.lockUpdate.RUnlock()
 	return calls
 }
 

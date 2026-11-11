@@ -12,6 +12,7 @@ type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (user.User, error)
 	FindByID(ctx context.Context, id string) (user.User, error)
 	List(ctx context.Context, limit, offset int) ([]user.User, error)
+	Update(ctx context.Context, id string, changes user.Changes) (user.User, error)
 }
 
 type PasswordHasher interface {
