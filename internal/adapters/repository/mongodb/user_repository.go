@@ -61,9 +61,9 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (user.Us
 }
 
 func (r *UserRepository) FindByID(ctx context.Context, id string) (user.User, error) {
-	oid, err := bson.ObjectIDFromHex(id)
+	oid, err := parseID("find user by id", id)
 	if err != nil {
-		return user.User{}, fmt.Errorf("mongodb: find user by id: %w", user.ErrInvalidID)
+		return user.User{}, err
 	}
 	return r.findOne(ctx, "find user by id", bson.D{{Key: "_id", Value: oid}})
 }
@@ -86,9 +86,9 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]user.Us
 }
 
 func (r *UserRepository) Update(ctx context.Context, id string, changes user.Changes) (user.User, error) {
-	oid, err := bson.ObjectIDFromHex(id)
+	oid, err := parseID("update user", id)
 	if err != nil {
-		return user.User{}, fmt.Errorf("mongodb: update user: %w", user.ErrInvalidID)
+		return user.User{}, err
 	}
 
 	set := bson.D{}
@@ -114,6 +114,14 @@ func (r *UserRepository) Update(ctx context.Context, id string, changes user.Cha
 		return user.User{}, fmt.Errorf("mongodb: update user: %w", err)
 	}
 	return doc.toDomain(), nil
+}
+
+func parseID(operation, id string) (bson.ObjectID, error) {
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return bson.ObjectID{}, fmt.Errorf("mongodb: %s: %w", operation, user.ErrInvalidID)
+	}
+	return oid, nil
 }
 
 func (r *UserRepository) findOne(ctx context.Context, operation string, filter bson.D) (user.User, error) {
