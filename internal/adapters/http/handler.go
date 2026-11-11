@@ -13,6 +13,7 @@ type UserService interface {
 	Register(ctx context.Context, in userservice.RegisterInput) (user.User, error)
 	Login(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error)
 	GetUser(ctx context.Context, id string) (user.User, error)
+	ListUsers(ctx context.Context, in userservice.ListInput) (userservice.UserPage, error)
 }
 
 type Handler struct {
@@ -30,6 +31,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/register", h.register)
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.Handle("POST /api/v1/users", h.requireAuth(http.HandlerFunc(h.register)))
+	mux.Handle("GET /api/v1/users", h.requireAuth(http.HandlerFunc(h.listUsers)))
 	mux.Handle("GET /api/v1/users/{id}", h.requireAuth(http.HandlerFunc(h.getUser)))
 	return mux
 }

@@ -91,6 +91,9 @@ var _ UserService = &UserServiceMock{}
 //			GetUserFunc: func(ctx context.Context, id string) (user.User, error) {
 //				panic("mock out the GetUser method")
 //			},
+//			ListUsersFunc: func(ctx context.Context, in userservice.ListInput) (userservice.UserPage, error) {
+//				panic("mock out the ListUsers method")
+//			},
 //			LoginFunc: func(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error) {
 //				panic("mock out the Login method")
 //			},
@@ -107,6 +110,9 @@ type UserServiceMock struct {
 	// GetUserFunc mocks the GetUser method.
 	GetUserFunc func(ctx context.Context, id string) (user.User, error)
 
+	// ListUsersFunc mocks the ListUsers method.
+	ListUsersFunc func(ctx context.Context, in userservice.ListInput) (userservice.UserPage, error)
+
 	// LoginFunc mocks the Login method.
 	LoginFunc func(ctx context.Context, in userservice.LoginInput) (userservice.AccessToken, error)
 
@@ -121,6 +127,13 @@ type UserServiceMock struct {
 			Ctx context.Context
 			// ID is the id argument value.
 			ID string
+		}
+		// ListUsers holds details about calls to the ListUsers method.
+		ListUsers []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// In is the in argument value.
+			In userservice.ListInput
 		}
 		// Login holds details about calls to the Login method.
 		Login []struct {
@@ -137,9 +150,10 @@ type UserServiceMock struct {
 			In userservice.RegisterInput
 		}
 	}
-	lockGetUser  sync.RWMutex
-	lockLogin    sync.RWMutex
-	lockRegister sync.RWMutex
+	lockGetUser   sync.RWMutex
+	lockListUsers sync.RWMutex
+	lockLogin     sync.RWMutex
+	lockRegister  sync.RWMutex
 }
 
 // GetUser calls GetUserFunc.
@@ -175,6 +189,42 @@ func (mock *UserServiceMock) GetUserCalls() []struct {
 	mock.lockGetUser.RLock()
 	calls = mock.calls.GetUser
 	mock.lockGetUser.RUnlock()
+	return calls
+}
+
+// ListUsers calls ListUsersFunc.
+func (mock *UserServiceMock) ListUsers(ctx context.Context, in userservice.ListInput) (userservice.UserPage, error) {
+	if mock.ListUsersFunc == nil {
+		panic("UserServiceMock.ListUsersFunc: method is nil but UserService.ListUsers was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		In  userservice.ListInput
+	}{
+		Ctx: ctx,
+		In:  in,
+	}
+	mock.lockListUsers.Lock()
+	mock.calls.ListUsers = append(mock.calls.ListUsers, callInfo)
+	mock.lockListUsers.Unlock()
+	return mock.ListUsersFunc(ctx, in)
+}
+
+// ListUsersCalls gets all the calls that were made to ListUsers.
+// Check the length with:
+//
+//	len(mockedUserService.ListUsersCalls())
+func (mock *UserServiceMock) ListUsersCalls() []struct {
+	Ctx context.Context
+	In  userservice.ListInput
+} {
+	var calls []struct {
+		Ctx context.Context
+		In  userservice.ListInput
+	}
+	mock.lockListUsers.RLock()
+	calls = mock.calls.ListUsers
+	mock.lockListUsers.RUnlock()
 	return calls
 }
 
