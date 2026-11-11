@@ -51,6 +51,14 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (user.Us
 	return r.findOne(ctx, "find user by email", bson.D{{Key: "email", Value: email}})
 }
 
+func (r *UserRepository) FindByID(ctx context.Context, id string) (user.User, error) {
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return user.User{}, fmt.Errorf("mongodb: find user by id: %w", user.ErrInvalidID)
+	}
+	return r.findOne(ctx, "find user by id", bson.D{{Key: "_id", Value: oid}})
+}
+
 func (r *UserRepository) findOne(ctx context.Context, operation string, filter bson.D) (user.User, error) {
 	var doc userDocument
 	err := r.users.FindOne(ctx, filter).Decode(&doc)
