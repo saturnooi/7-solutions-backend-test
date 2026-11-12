@@ -1,7 +1,10 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -168,5 +171,86 @@ func TestRoutes_OversizedBodyClosesTheConnection(t *testing.T) {
 	}
 	if !resp.Close {
 		t.Error("response keeps the connection open, want Connection: close after an oversized body")
+	}
+}
+
+func TestServiceError_Cancellation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		cancelled  bool
+		cause      error
+		wantStatus int
+		wantCode   string
+		wantLog    string
+	}{
+		{
+			name:       "client gave up and the call stopped because of it",
+			cancelled:  true,
+			cause:      context.Canceled,
+			wantStatus: statusClientClosedRequest,
+			wantCode:   "request_canceled",
+			wantLog:    `"level":"INFO","msg":"request canceled"`,
+		},
+		{
+			name:       "client gave up but the call failed for another reason",
+			cancelled:  true,
+			cause:      errors.New("write concern timeout"),
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "internal_error",
+			wantLog:    `"level":"ERROR","msg":"request failed"`,
+		},
+		{
+			name:       "client gave up while the database timed out on its own",
+			cancelled:  true,
+			cause:      context.DeadlineExceeded,
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "internal_error",
+			wantLog:    `"level":"ERROR","msg":"request failed"`,
+		},
+		{
+			name:       "a cancellation inside the server while the client still waits",
+			cause:      context.Canceled,
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "internal_error",
+			wantLog:    `"level":"ERROR","msg":"request failed"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+			service := &UserServiceMock{GetUserFunc: func(context.Context, string) (user.User, error) {
+				return user.User{}, fmt.Errorf("get user: mongodb: find user by id: %w", tt.cause)
+			}}
+			accept := &AuthenticatorMock{AuthenticateFunc: func(context.Context, string) (string, error) { return callerID, nil }}
+			var logs bytes.Buffer
+			router := NewHandler(service, accept, &HealthCheckerMock{}, slog.New(slog.NewJSONHandler(&logs, nil))).Routes()
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/users/"+callerID, nil)
+			req.Header.Set("Authorization", "Bearer valid.token.signature")
+			rec := httptest.NewRecorder()
+
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if !strings.Contains(rec.Body.String(), `"code":"`+tt.wantCode+`"`) {
+				t.Errorf("body = %s, want code %q", rec.Body.String(), tt.wantCode)
+			}
+			if !strings.Contains(logs.String(), tt.wantLog) {
+				t.Errorf("logs = %s, want a line with %s", logs.String(), tt.wantLog)
+			}
+			if wantError := strings.Contains(tt.wantLog, `"ERROR"`); (errorLogs(&logs) != "") != wantError {
+				t.Errorf("ERROR logged = %v, want %v (logs %s)", errorLogs(&logs) != "", wantError, logs.String())
+			}
+		})
 	}
 }
