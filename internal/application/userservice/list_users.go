@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	DefaultPageSize = 20
-	MaxPageSize     = 100
+	defaultPageSize = 20
+	maxPageSize     = 100
 )
 
 type ListInput struct {
@@ -24,6 +24,9 @@ type UserPage struct {
 }
 
 func (s *Service) ListUsers(ctx context.Context, in ListInput) (UserPage, error) {
+	if in.Limit == 0 {
+		in.Limit = defaultPageSize
+	}
 	if err := validateList(in); err != nil {
 		return UserPage{}, err
 	}
@@ -37,8 +40,8 @@ func (s *Service) ListUsers(ctx context.Context, in ListInput) (UserPage, error)
 
 func validateList(in ListInput) error {
 	var fields []user.FieldError
-	if in.Limit < 1 || in.Limit > MaxPageSize {
-		fields = append(fields, user.FieldError{Field: "limit", Message: fmt.Sprintf("must be between 1 and %d", MaxPageSize)})
+	if in.Limit < 1 || in.Limit > maxPageSize {
+		fields = append(fields, user.FieldError{Field: "limit", Message: fmt.Sprintf("must be between 1 and %d", maxPageSize)})
 	}
 	if in.Offset < 0 {
 		fields = append(fields, user.FieldError{Field: "offset", Message: "must not be negative"})

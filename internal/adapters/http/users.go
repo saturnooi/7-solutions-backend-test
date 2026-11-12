@@ -78,7 +78,7 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseListQuery(query url.Values) (userservice.ListInput, error) {
-	in := userservice.ListInput{Limit: userservice.DefaultPageSize}
+	var in userservice.ListInput
 	var fields []user.FieldError
 	for _, param := range []struct {
 		name string

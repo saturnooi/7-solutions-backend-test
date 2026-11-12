@@ -233,9 +233,9 @@ func TestListUsers(t *testing.T) {
 		CreatedAt:    time.Date(2026, time.November, 11, 9, 0, 0, 0, time.UTC),
 	}
 	accept := func(context.Context, string) (string, error) { return callerID, nil }
-	pageOf := func(users ...user.User) func(context.Context, userservice.ListInput) (userservice.UserPage, error) {
-		return func(_ context.Context, in userservice.ListInput) (userservice.UserPage, error) {
-			return userservice.UserPage{Users: users, Limit: in.Limit, Offset: in.Offset}, nil
+	pageOf := func(limit, offset int, users ...user.User) func(context.Context, userservice.ListInput) (userservice.UserPage, error) {
+		return func(context.Context, userservice.ListInput) (userservice.UserPage, error) {
+			return userservice.UserPage{Users: users, Limit: limit, Offset: offset}, nil
 		}
 	}
 
@@ -250,21 +250,21 @@ func TestListUsers(t *testing.T) {
 		wantLog       string
 	}{
 		{
-			name:          "defaults when no query is given",
+			name:          "no query leaves the defaults to the use case",
 			authorization: "Bearer valid.token.signature",
-			list:          pageOf(created, alice),
+			list:          pageOf(20, 0, created, alice),
 			wantStatus:    http.StatusOK,
 			wantBody: `{"users":[` +
 				`{"id":"6730f1c2a1b2c3d4e5f60719","name":"Bob Jones","email":"bob@example.com","created_at":"2026-11-11T10:00:00Z"},` +
 				`{"id":"6730f1c2a1b2c3d4e5f60718","name":"Alice Smith","email":"alice@example.com","created_at":"2026-11-11T09:00:00Z"}` +
 				`],"limit":20,"offset":0}`,
-			wantInput: &userservice.ListInput{Limit: 20, Offset: 0},
+			wantInput: &userservice.ListInput{Limit: 0, Offset: 0},
 		},
 		{
 			name:          "explicit limit and offset",
 			query:         "?limit=1&offset=1",
 			authorization: "Bearer valid.token.signature",
-			list:          pageOf(alice),
+			list:          pageOf(1, 1, alice),
 			wantStatus:    http.StatusOK,
 			wantBody:      `{"users":[{"id":"6730f1c2a1b2c3d4e5f60718","name":"Alice Smith","email":"alice@example.com","created_at":"2026-11-11T09:00:00Z"}],"limit":1,"offset":1}`,
 			wantInput:     &userservice.ListInput{Limit: 1, Offset: 1},
@@ -273,19 +273,19 @@ func TestListUsers(t *testing.T) {
 			name:          "empty page is an empty array",
 			query:         "?offset=500",
 			authorization: "Bearer valid.token.signature",
-			list:          pageOf(),
+			list:          pageOf(20, 500),
 			wantStatus:    http.StatusOK,
 			wantBody:      `{"users":[],"limit":20,"offset":500}`,
-			wantInput:     &userservice.ListInput{Limit: 20, Offset: 500},
+			wantInput:     &userservice.ListInput{Limit: 0, Offset: 500},
 		},
 		{
-			name:          "empty parameters fall back to defaults",
+			name:          "empty parameters are passed on as absent",
 			query:         "?limit=&offset=",
 			authorization: "Bearer valid.token.signature",
-			list:          pageOf(),
+			list:          pageOf(20, 0),
 			wantStatus:    http.StatusOK,
 			wantBody:      `{"users":[],"limit":20,"offset":0}`,
-			wantInput:     &userservice.ListInput{Limit: 20, Offset: 0},
+			wantInput:     &userservice.ListInput{Limit: 0, Offset: 0},
 		},
 		{
 			name:          "non-numeric parameters",
@@ -313,7 +313,7 @@ func TestListUsers(t *testing.T) {
 			},
 			wantStatus: http.StatusInternalServerError,
 			wantBody:   `{"error":{"code":"internal_error","message":"internal server error"}}`,
-			wantInput:  &userservice.ListInput{Limit: 20, Offset: 0},
+			wantInput:  &userservice.ListInput{Limit: 0, Offset: 0},
 			wantLog:    "cursor killed",
 		},
 		{
