@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
@@ -39,7 +40,7 @@ func (w *UserCountLogger) Run(ctx context.Context) {
 func (w *UserCountLogger) logCount(ctx context.Context) {
 	count, err := w.users.CountUsers(ctx)
 	if err != nil {
-		if ctx.Err() == nil {
+		if !errors.Is(err, ctx.Err()) {
 			w.logger.ErrorContext(ctx, "count users failed", "error", err)
 		}
 		return
