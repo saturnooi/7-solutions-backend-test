@@ -1,6 +1,6 @@
-# Build output (tmp/ is Air's live-reload build directory)
-/bin/
-/tmp/
+# Build output of the Go project (tmp/ is Air's live-reload build directory)
+/user-management-api/bin/
+/user-management-api/tmp/
 
 # Test and coverage artifacts
 *.test
