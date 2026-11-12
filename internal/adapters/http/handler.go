@@ -39,5 +39,5 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/users/{id}", h.requireAuth(http.HandlerFunc(h.getUser)))
 	mux.Handle("PATCH /api/v1/users/{id}", h.requireAuth(http.HandlerFunc(h.updateUser)))
 	mux.Handle("DELETE /api/v1/users/{id}", h.requireAuth(http.HandlerFunc(h.deleteUser)))
-	return h.logRequests(mux)
+	return h.logRequests(jsonRouteErrors(mux))
 }
