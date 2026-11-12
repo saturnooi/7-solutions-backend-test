@@ -12,10 +12,10 @@ var ErrUnauthenticated = errors.New("userservice: authentication required")
 
 type Authenticator struct {
 	verifier TokenVerifier
-	users    UserFinder
+	users    UserChecker
 }
 
-func NewAuthenticator(verifier TokenVerifier, users UserFinder) *Authenticator {
+func NewAuthenticator(verifier TokenVerifier, users UserChecker) *Authenticator {
 	return &Authenticator{verifier: verifier, users: users}
 }
 
@@ -25,12 +25,15 @@ func (a *Authenticator) Authenticate(ctx context.Context, token string) (string,
 		return "", fmt.Errorf("%w: %w", ErrUnauthenticated, err)
 	}
 
-	_, err = a.users.FindByID(ctx, userID)
-	if errors.Is(err, user.ErrNotFound) || errors.Is(err, user.ErrInvalidID) {
+	exists, err := a.users.Exists(ctx, userID)
+	if errors.Is(err, user.ErrInvalidID) {
 		return "", fmt.Errorf("%w: %w", ErrUnauthenticated, err)
 	}
 	if err != nil {
 		return "", fmt.Errorf("authenticate: %w", err)
+	}
+	if !exists {
+		return "", fmt.Errorf("%w: %w", ErrUnauthenticated, user.ErrNotFound)
 	}
 	return userID, nil
 }

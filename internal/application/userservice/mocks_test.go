@@ -389,46 +389,46 @@ func (mock *UserRepositoryMock) UpdateCalls() []struct {
 	return calls
 }
 
-// Ensure that UserFinderMock does implement UserFinder.
+// Ensure that UserCheckerMock does implement UserChecker.
 // If this is not the case, regenerate this file with mockery.
-var _ UserFinder = &UserFinderMock{}
+var _ UserChecker = &UserCheckerMock{}
 
-// UserFinderMock is a mock implementation of UserFinder.
+// UserCheckerMock is a mock implementation of UserChecker.
 //
-//	func TestSomethingThatUsesUserFinder(t *testing.T) {
+//	func TestSomethingThatUsesUserChecker(t *testing.T) {
 //
-//		// make and configure a mocked UserFinder
-//		mockedUserFinder := &UserFinderMock{
-//			FindByIDFunc: func(ctx context.Context, id string) (user.User, error) {
-//				panic("mock out the FindByID method")
+//		// make and configure a mocked UserChecker
+//		mockedUserChecker := &UserCheckerMock{
+//			ExistsFunc: func(ctx context.Context, id string) (bool, error) {
+//				panic("mock out the Exists method")
 //			},
 //		}
 //
-//		// use mockedUserFinder in code that requires UserFinder
+//		// use mockedUserChecker in code that requires UserChecker
 //		// and then make assertions.
 //
 //	}
-type UserFinderMock struct {
-	// FindByIDFunc mocks the FindByID method.
-	FindByIDFunc func(ctx context.Context, id string) (user.User, error)
+type UserCheckerMock struct {
+	// ExistsFunc mocks the Exists method.
+	ExistsFunc func(ctx context.Context, id string) (bool, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
-		// FindByID holds details about calls to the FindByID method.
-		FindByID []struct {
+		// Exists holds details about calls to the Exists method.
+		Exists []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 			// ID is the id argument value.
 			ID string
 		}
 	}
-	lockFindByID sync.RWMutex
+	lockExists sync.RWMutex
 }
 
-// FindByID calls FindByIDFunc.
-func (mock *UserFinderMock) FindByID(ctx context.Context, id string) (user.User, error) {
-	if mock.FindByIDFunc == nil {
-		panic("UserFinderMock.FindByIDFunc: method is nil but UserFinder.FindByID was just called")
+// Exists calls ExistsFunc.
+func (mock *UserCheckerMock) Exists(ctx context.Context, id string) (bool, error) {
+	if mock.ExistsFunc == nil {
+		panic("UserCheckerMock.ExistsFunc: method is nil but UserChecker.Exists was just called")
 	}
 	callInfo := struct {
 		Ctx context.Context
@@ -437,17 +437,17 @@ func (mock *UserFinderMock) FindByID(ctx context.Context, id string) (user.User,
 		Ctx: ctx,
 		ID:  id,
 	}
-	mock.lockFindByID.Lock()
-	mock.calls.FindByID = append(mock.calls.FindByID, callInfo)
-	mock.lockFindByID.Unlock()
-	return mock.FindByIDFunc(ctx, id)
+	mock.lockExists.Lock()
+	mock.calls.Exists = append(mock.calls.Exists, callInfo)
+	mock.lockExists.Unlock()
+	return mock.ExistsFunc(ctx, id)
 }
 
-// FindByIDCalls gets all the calls that were made to FindByID.
+// ExistsCalls gets all the calls that were made to Exists.
 // Check the length with:
 //
-//	len(mockedUserFinder.FindByIDCalls())
-func (mock *UserFinderMock) FindByIDCalls() []struct {
+//	len(mockedUserChecker.ExistsCalls())
+func (mock *UserCheckerMock) ExistsCalls() []struct {
 	Ctx context.Context
 	ID  string
 } {
@@ -455,9 +455,9 @@ func (mock *UserFinderMock) FindByIDCalls() []struct {
 		Ctx context.Context
 		ID  string
 	}
-	mock.lockFindByID.RLock()
-	calls = mock.calls.FindByID
-	mock.lockFindByID.RUnlock()
+	mock.lockExists.RLock()
+	calls = mock.calls.Exists
+	mock.lockExists.RUnlock()
 	return calls
 }
 

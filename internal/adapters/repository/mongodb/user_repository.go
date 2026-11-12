@@ -131,6 +131,21 @@ func (r *UserRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (r *UserRepository) Exists(ctx context.Context, id string) (bool, error) {
+	oid, err := parseID("check user exists", id)
+	if err != nil {
+		return false, err
+	}
+	err = r.users.FindOne(ctx, bson.D{{Key: "_id", Value: oid}}, options.FindOne().SetProjection(bson.D{{Key: "_id", Value: 1}})).Err()
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("mongodb: check user exists: %w", err)
+	}
+	return true, nil
+}
+
 func (r *UserRepository) Count(ctx context.Context) (int64, error) {
 	count, err := r.users.CountDocuments(ctx, bson.D{})
 	if err != nil {

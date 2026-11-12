@@ -15,7 +15,7 @@ packages:
       PasswordHasher: {}
       TokenIssuer: {}
       TokenVerifier: {}
-      UserFinder: {}
+      UserChecker: {}
   user-management-api/internal/adapters/http:
     interfaces:
       UserService: {}

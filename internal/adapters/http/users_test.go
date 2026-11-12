@@ -655,24 +655,22 @@ func TestDeleteUser(t *testing.T) {
 	}
 }
 
-type finderFunc func(ctx context.Context, id string) (user.User, error)
+type checkerFunc func(ctx context.Context, id string) (bool, error)
 
-func (f finderFunc) FindByID(ctx context.Context, id string) (user.User, error) { return f(ctx, id) }
+func (f checkerFunc) Exists(ctx context.Context, id string) (bool, error) { return f(ctx, id) }
 
 func TestProtectedRoute_WithRealAuthentication(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
 	verifier := newJWTService(t, testJWTSecret, func() time.Time { return now })
-	exists := finderFunc(func(context.Context, string) (user.User, error) { return created, nil })
-	deleted := finderFunc(func(context.Context, string) (user.User, error) {
-		return user.User{}, fmt.Errorf("mongodb: find user by id: %w", user.ErrNotFound)
-	})
+	exists := checkerFunc(func(context.Context, string) (bool, error) { return true, nil })
+	deleted := checkerFunc(func(context.Context, string) (bool, error) { return false, nil })
 
 	tests := []struct {
 		name       string
 		issuer     *auth.JWTService
-		users      finderFunc
+		users      checkerFunc
 		wantStatus int
 	}{
 		{name: "token from login for an existing user", issuer: verifier, users: exists, wantStatus: http.StatusCreated},

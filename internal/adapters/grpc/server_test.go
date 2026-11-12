@@ -262,9 +262,9 @@ func TestGetUser(t *testing.T) {
 	}
 }
 
-type finderFunc func(ctx context.Context, id string) (user.User, error)
+type checkerFunc func(ctx context.Context, id string) (bool, error)
 
-func (f finderFunc) FindByID(ctx context.Context, id string) (user.User, error) { return f(ctx, id) }
+func (f checkerFunc) Exists(ctx context.Context, id string) (bool, error) { return f(ctx, id) }
 
 func TestGetUser_WithRealAuthentication(t *testing.T) {
 	t.Parallel()
@@ -279,13 +279,13 @@ func TestGetUser_WithRealAuthentication(t *testing.T) {
 		return service
 	}
 	verifier := newJWT(now)
-	exists := finderFunc(func(context.Context, string) (user.User, error) { return stored, nil })
-	deleted := finderFunc(func(context.Context, string) (user.User, error) { return user.User{}, user.ErrNotFound })
+	exists := checkerFunc(func(context.Context, string) (bool, error) { return true, nil })
+	deleted := checkerFunc(func(context.Context, string) (bool, error) { return false, nil })
 
 	tests := []struct {
 		name     string
 		issuer   *auth.JWTService
-		users    finderFunc
+		users    checkerFunc
 		wantCode codes.Code
 	}{
 		{name: "token from login", issuer: verifier, users: exists, wantCode: codes.OK},

@@ -17,8 +17,8 @@ type UserRepository interface {
 	Count(ctx context.Context) (int64, error)
 }
 
-type UserFinder interface {
-	FindByID(ctx context.Context, id string) (user.User, error)
+type UserChecker interface {
+	Exists(ctx context.Context, id string) (bool, error)
 }
 
 type PasswordHasher interface {
