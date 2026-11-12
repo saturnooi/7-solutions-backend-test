@@ -104,8 +104,8 @@ GET /api/v1/users/{id}
       └─ UserRepository port → adapters/repository/mongodb (parse the ObjectID, then FindOne)
 
 GET /api/v1/users?limit=&offset=
-  → adapters/http            requireAuth, then parse limit and offset as integers (default limit 20)
-  → application/userservice  ListUsers: check 1 ≤ limit ≤ 100 and offset ≥ 0
+  → adapters/http            requireAuth, then parse limit and offset as integers (absent means 0)
+  → application/userservice  ListUsers: a limit of 0 becomes 20, then check 1 ≤ limit ≤ 100 and offset ≥ 0
       └─ UserRepository port → adapters/repository/mongodb (Find sorted by the created_at_desc index)
 
 PATCH /api/v1/users/{id}
@@ -197,7 +197,7 @@ Error messages name the field and the rule, never the submitted value, for examp
 | `GRPC_ADDR` | No | `:9090` | Address the gRPC server listens on |
 | `MONGO_URI` | Yes | | MongoDB connection string |
 | `MONGO_DATABASE` | No | `user_management` | Database name |
-| `BCRYPT_COST` | No | `12` | bcrypt work factor, from 10 to 31 |
+| `BCRYPT_COST` | No | `12` | bcrypt work factor, from 10 to 14 |
 | `JWT_SECRET` | Yes | | HMAC key for signing tokens, at least 32 bytes |
 | `JWT_ISSUER` | No | `user-management-api` | `iss` claim of issued tokens |
 | `JWT_TTL` | No | `1h` | Token lifetime, a Go duration such as `15m` or `1h` |
@@ -411,7 +411,7 @@ Lists users, newest first. Users created in the same millisecond are ordered by 
 
 | Query parameter | Default | Allowed |
 |---|---|---|
-| `limit` | `20` | 1 to 100 |
+| `limit` | `20` | 1 to 100. Absent or `0` means the default. |
 | `offset` | `0` | 0 or more |
 
 Request:
@@ -808,7 +808,7 @@ The requirements leave some points open. These are the readings this implementat
 - **Email uniqueness is enforced by a unique index.** The repository inserts and maps MongoDB's duplicate-key error to `ErrEmailAlreadyExists`. Checking for an existing email first would leave a race between two concurrent registrations.
 - **Request bodies are decoded strictly.** Unknown fields are rejected, which blocks mass-assignment attempts such as `"role":"admin"`. The body must be one JSON value and at most 1 MiB.
 - **Internal errors never reach the client.** Unexpected errors are logged with the method and path, and the client receives only `internal_error`. Passwords and hashes are never logged, and responses never contain a hash.
-- **bcrypt cost defaults to 12.** Registration then takes about 230 ms on a laptop. `BCRYPT_COST` accepts 10 to 31, where 10 is the common minimum recommendation.
+- **bcrypt cost defaults to 12.** Registration then takes about 230 ms on a laptop. `BCRYPT_COST` accepts 10 to 14: 10 is the common minimum recommendation, and 14 keeps one hash around 1 second on a laptop, well inside the 10-second HTTP write timeout.
 - **Every MongoDB call has a timeout.** The client is created with a 5-second operation timeout, so a call without its own deadline cannot hang a request.
 - **Login failures look the same.** An unknown email and a wrong password both return `401 invalid_credentials`. For an unknown email, the service still runs a bcrypt comparison against a dummy hash, so the response time does not reveal which emails are registered. In a local run, both cases took about 0.22 s.
 - **Passwords over 72 bytes never match.** bcrypt's `CompareHashAndPassword` reads only the first 72 bytes, so a user with a 72-byte password could otherwise log in with that password plus any suffix. The hasher's `Compare` rejects longer passwords before calling bcrypt.
@@ -863,4 +863,4 @@ The requirements leave some points open. These are the readings this implementat
 - The worker uses `CountDocuments`, which scans the `_id` index. That is exact and cheap at this scale. For a very large collection, `EstimatedDocumentCount` would be faster but approximate.
 - The user list has no total count. With offset pagination, a user created while a client is paging shifts later pages by one, so a client can see the same user twice. Large offsets also get slower, because MongoDB still walks the skipped entries. Cursor (keyset) pagination on `(created_at, _id)` would fix both.
 - Login has no rate limiting or lockout, so password guessing is limited only by bcrypt's cost.
-- The dummy hash for unknown-email logins is computed on the first such request after startup, so that one request takes about twice as long.
+- The dummy hash for unknown-email logins is computed on the first such request after startup, so that one request takes about twice as long. It uses the current `BCRYPT_COST`, so after the cost is changed, logins of users hashed at the old cost take a different time from unknown emails until those users are re-hashed (there is no re-hash on login).
