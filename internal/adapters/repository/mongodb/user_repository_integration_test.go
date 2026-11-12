@@ -581,6 +581,51 @@ func TestUserRepository_Count(t *testing.T) {
 	}
 }
 
+func TestUserRepository_Exists(t *testing.T) {
+	t.Parallel()
+
+	repo, _ := newTestRepository(t)
+	created, err := repo.Create(t.Context(), newTestUser(t, "alice@example.com"))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		id        string
+		cancelled bool
+		want      bool
+		wantErr   error
+	}{
+		{name: "stored id", id: created.ID, want: true},
+		{name: "valid id that is not stored", id: bson.NewObjectID().Hex(), want: false},
+		{name: "upper-case hex is rejected before querying", id: strings.ToUpper(created.ID), cancelled: true, wantErr: user.ErrInvalidID},
+		{name: "malformed id is rejected before querying", id: "not-an-id", cancelled: true, wantErr: user.ErrInvalidID},
+		{name: "cancelled context", id: created.ID, cancelled: true, wantErr: context.Canceled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+
+			got, err := repo.Exists(ctx, tt.id)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Exists() error = %v, want %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("Exists() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUserRepository_EnsureIndexes(t *testing.T) {
 	t.Parallel()
 
