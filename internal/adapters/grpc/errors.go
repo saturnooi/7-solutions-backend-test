@@ -18,7 +18,7 @@ func (s *userServer) toStatus(ctx context.Context, err error) error {
 	}
 	switch {
 	case errors.Is(err, user.ErrInvalidID):
-		return status.Error(codes.InvalidArgument, "id must be a 24-character hexadecimal string")
+		return status.Error(codes.InvalidArgument, "id must be a 24-character lowercase hexadecimal string")
 	case errors.Is(err, user.ErrNotFound):
 		return status.Error(codes.NotFound, "user not found")
 	case errors.Is(err, user.ErrEmailAlreadyExists):

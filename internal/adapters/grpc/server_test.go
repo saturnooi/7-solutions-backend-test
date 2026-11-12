@@ -208,7 +208,7 @@ func TestGetUser(t *testing.T) {
 			authorization: []string{"Bearer " + validToken},
 			getUser:       returns(user.User{}, fmt.Errorf("get user: %w", user.ErrInvalidID)),
 			wantCode:      codes.InvalidArgument,
-			wantMessage:   "id must be a 24-character hexadecimal string",
+			wantMessage:   "id must be a 24-character lowercase hexadecimal string",
 			wantLookup:    true,
 		},
 		{

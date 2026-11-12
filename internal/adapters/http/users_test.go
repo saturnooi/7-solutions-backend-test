@@ -161,7 +161,7 @@ func TestGetUser(t *testing.T) {
 				return user.User{}, fmt.Errorf("get user: %w", user.ErrInvalidID)
 			},
 			wantStatus: http.StatusBadRequest,
-			wantBody:   `{"error":{"code":"invalid_id","message":"id must be a 24-character hexadecimal string"}}`,
+			wantBody:   `{"error":{"code":"invalid_id","message":"id must be a 24-character lowercase hexadecimal string"}}`,
 			wantID:     "not-an-id",
 		},
 		{

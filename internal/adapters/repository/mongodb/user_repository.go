@@ -141,7 +141,7 @@ func (r *UserRepository) Count(ctx context.Context) (int64, error) {
 
 func parseID(operation, id string) (bson.ObjectID, error) {
 	oid, err := bson.ObjectIDFromHex(id)
-	if err != nil {
+	if err != nil || oid.Hex() != id {
 		return bson.ObjectID{}, fmt.Errorf("mongodb: %s: %w", operation, user.ErrInvalidID)
 	}
 	return oid, nil

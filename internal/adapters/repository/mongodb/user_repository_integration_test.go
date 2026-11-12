@@ -188,7 +188,7 @@ func TestUserRepository_FindByID(t *testing.T) {
 		wantErr   error
 	}{
 		{name: "stored id", id: created.ID, want: created},
-		{name: "upper-case hex of the stored id", id: strings.ToUpper(created.ID), want: created},
+		{name: "upper-case hex of the stored id is not canonical", id: strings.ToUpper(created.ID), cancelled: true, wantErr: user.ErrInvalidID},
 		{name: "valid id that is not stored", id: bson.NewObjectID().Hex(), wantErr: user.ErrNotFound},
 		{name: "cancelled context", id: created.ID, cancelled: true, wantErr: context.Canceled},
 		{name: "not hex is rejected before querying", id: "not-an-object-id-at-all!", cancelled: true, wantErr: user.ErrInvalidID},

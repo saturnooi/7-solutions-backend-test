@@ -76,7 +76,7 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, err 
 		return
 	}
 	if errors.Is(err, user.ErrInvalidID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "id must be a 24-character hexadecimal string")
+		writeError(w, http.StatusBadRequest, "invalid_id", "id must be a 24-character lowercase hexadecimal string")
 		return
 	}
 	if errors.Is(err, user.ErrNotFound) {
