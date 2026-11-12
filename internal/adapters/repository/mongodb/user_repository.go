@@ -98,6 +98,9 @@ func (r *UserRepository) Update(ctx context.Context, id string, changes user.Cha
 	if changes.Email != nil {
 		set = append(set, bson.E{Key: "email", Value: *changes.Email})
 	}
+	if len(set) == 0 {
+		return user.User{}, fmt.Errorf("mongodb: update user: %w", user.ErrNoChanges)
+	}
 
 	var doc userDocument
 	err = r.users.FindOneAndUpdate(ctx,
