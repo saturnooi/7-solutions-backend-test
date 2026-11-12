@@ -626,6 +626,29 @@ func TestUserRepository_Exists(t *testing.T) {
 	}
 }
 
+func TestUserRepository_Update_RejectsEmptyChanges(t *testing.T) {
+	t.Parallel()
+
+	repo, _ := newTestRepository(t)
+	alice, err := repo.Create(t.Context(), newTestUser(t, "alice@example.com"))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	got, err := repo.Update(t.Context(), alice.ID, user.Changes{})
+
+	if !errors.Is(err, user.ErrNoChanges) {
+		t.Fatalf("Update() error = %v, want %v", err, user.ErrNoChanges)
+	}
+	if got != (user.User{}) {
+		t.Errorf("Update() = %+v, want the zero User", got)
+	}
+	stored, err := repo.FindByID(t.Context(), alice.ID)
+	if err != nil || stored.Name != alice.Name || stored.Email != alice.Email {
+		t.Errorf("stored user = %+v (err %v), want it unchanged", stored, err)
+	}
+}
+
 func TestUserRepository_EnsureIndexes(t *testing.T) {
 	t.Parallel()
 
