@@ -113,6 +113,12 @@ func TestRegister(t *testing.T) {
 			wantBody:   `{"error":{"code":"invalid_json","message":"request body must be a single JSON object with only the documented fields"}}`,
 		},
 		{
+			name:       "valid object padded past 1 MiB",
+			body:       validBody + strings.Repeat(" ", maxBodyBytes),
+			wantStatus: http.StatusRequestEntityTooLarge,
+			wantBody:   `{"error":{"code":"request_too_large","message":"request body must not exceed 1 MiB"}}`,
+		},
+		{
 			name:       "body over 1 MiB",
 			body:       `{"name":"` + strings.Repeat("a", maxBodyBytes) + `"}`,
 			wantStatus: http.StatusRequestEntityTooLarge,

@@ -144,3 +144,29 @@ func TestRouteErrorWriter(t *testing.T) {
 		})
 	}
 }
+
+func TestRoutes_OversizedBodyClosesTheConnection(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(NewHandler(&UserServiceMock{}, &AuthenticatorMock{}, &HealthCheckerMock{}, slog.New(slog.DiscardHandler)).Routes())
+	t.Cleanup(server.Close)
+	body := `{"name":"` + strings.Repeat("a", maxBodyBytes) + `"}`
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/auth/register", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+	if !resp.Close {
+		t.Error("response keeps the connection open, want Connection: close after an oversized body")
+	}
+}
