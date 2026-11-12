@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -113,10 +114,7 @@ func run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		return nil
 	})
 	group.Go(func() error {
-		if err := grpcServer.Serve(grpcListener); err != nil {
-			return fmt.Errorf("grpc server: %w", err)
-		}
-		return nil
+		return serveGRPC(grpcServer, grpcListener)
 	})
 	group.Go(func() error {
 		counter.Run(groupCtx)
@@ -127,21 +125,43 @@ func run(ctx context.Context, logger *slog.Logger, getenv func(string) string) e
 		logger.Info("shutting down", "timeout", shutdownTimeout.String())
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		httpErr := server.Shutdown(shutdownCtx)
-		if httpErr == nil {
-			logger.Info("http server stopped")
-		}
-		stopGRPC(shutdownCtx, grpcServer)
-		logger.Info("grpc server stopped")
-		if httpErr != nil {
-			return fmt.Errorf("http server shutdown: %w", httpErr)
-		}
-		return nil
+		return shutdown(shutdownCtx, logger, server, grpcServer)
 	})
 	return group.Wait()
 }
 
-func stopGRPC(ctx context.Context, server *grpc.Server) {
+func serveGRPC(server *grpc.Server, listener net.Listener) error {
+	if err := server.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+		return fmt.Errorf("grpc server: %w", err)
+	}
+	return nil
+}
+
+func shutdown(ctx context.Context, logger *slog.Logger, httpServer *http.Server, grpcServer *grpc.Server) error {
+	var httpErr, grpcErr error
+	var stopping sync.WaitGroup
+	stopping.Go(func() {
+		if httpErr = stopHTTP(ctx, httpServer); httpErr == nil {
+			logger.Info("http server stopped")
+		}
+	})
+	stopping.Go(func() {
+		if grpcErr = stopGRPC(ctx, grpcServer); grpcErr == nil {
+			logger.Info("grpc server stopped")
+		}
+	})
+	stopping.Wait()
+	return errors.Join(httpErr, grpcErr)
+}
+
+func stopHTTP(ctx context.Context, server *http.Server) error {
+	if err := server.Shutdown(ctx); err != nil {
+		return errors.Join(fmt.Errorf("http server shutdown: %w", err), server.Close())
+	}
+	return nil
+}
+
+func stopGRPC(ctx context.Context, server *grpc.Server) error {
 	stopped := make(chan struct{})
 	go func() {
 		server.GracefulStop()
@@ -149,8 +169,10 @@ func stopGRPC(ctx context.Context, server *grpc.Server) {
 	}()
 	select {
 	case <-stopped:
+		return nil
 	case <-ctx.Done():
 		server.Stop()
 		<-stopped
+		return fmt.Errorf("grpc server shutdown: %w", ctx.Err())
 	}
 }
