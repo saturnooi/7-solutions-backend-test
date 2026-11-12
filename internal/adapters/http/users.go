@@ -51,7 +51,7 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 	var req updateUserRequest
-	if err := decodeJSON(w, r, &req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeDecodeError(w, err)
 		return
 	}

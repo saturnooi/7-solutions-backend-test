@@ -29,14 +29,17 @@ type fieldErrorBody struct {
 	Message string `json:"message"`
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return err
 	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	err := dec.Decode(&struct{}{})
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		return err
+	}
+	if !errors.Is(err, io.EOF) {
 		return errTrailingData
 	}
 	return nil

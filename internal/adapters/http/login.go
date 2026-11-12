@@ -19,7 +19,7 @@ type loginResponse struct {
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := decodeJSON(w, r, &req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeDecodeError(w, err)
 		return
 	}

@@ -32,7 +32,7 @@ func newUserResponse(u user.User) userResponse {
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
-	if err := decodeJSON(w, r, &req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeDecodeError(w, err)
 		return
 	}
