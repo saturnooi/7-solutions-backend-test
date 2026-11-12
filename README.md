@@ -92,7 +92,7 @@ Every protected route
   → adapters/http            requireAuth: read the bearer token
   → application/userservice  Authenticator: verify the token, then check that its user still exists
       ├─ TokenVerifier port  → adapters/auth (JWT HS256)
-      └─ UserFinder port     → adapters/repository/mongodb (FindByID)
+      └─ UserChecker port    → adapters/repository/mongodb (Exists: FindOne on _id, returning only _id)
   → adapters/http            put the user ID in the request context and call the handler
 
 POST /api/v1/users
@@ -392,13 +392,13 @@ Response `404 Not Found` for a well-formed ID that matches no user:
 Response `400 Bad Request` when the ID is not a MongoDB ObjectID:
 
 ```json
-{"error":{"code":"invalid_id","message":"id must be a 24-character hexadecimal string"}}
+{"error":{"code":"invalid_id","message":"id must be a 24-character lowercase hexadecimal string"}}
 ```
 
 | Status | Code | When |
 |---|---|---|
 | 200 | | User found |
-| 400 | `invalid_id` | The ID is not 24 hexadecimal characters |
+| 400 | `invalid_id` | The ID is not 24 lowercase hexadecimal characters |
 | 401 | `unauthorized` | Token missing or rejected |
 | 404 | `user_not_found` | No user has this ID |
 | 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
@@ -487,7 +487,7 @@ Response `400 Bad Request` for an empty update such as `{}`:
 | 400 | `empty_update` | Neither `name` nor `email` was sent |
 | 400 | `invalid_json` | Malformed JSON or an unknown field such as `password` |
 | 401 | `unauthorized` | Token missing or rejected |
-| 403 | `forbidden` | `{id}` is not the caller's own ID |
+| 403 | `forbidden` | `{id}` is not exactly the caller's own ID, including a malformed ID |
 | 404 | `user_not_found` | The caller's account no longer exists |
 | 409 | `email_already_exists` | Another user has this email |
 | 413 | `request_too_large` | Body larger than 1 MiB |
@@ -525,7 +525,7 @@ After the delete, the same token gets `401`:
 |---|---|---|
 | 204 | | Deleted |
 | 401 | `unauthorized` | Token missing or rejected, including a token whose user is already deleted |
-| 403 | `forbidden` | `{id}` is not the caller's own ID |
+| 403 | `forbidden` | `{id}` is not exactly the caller's own ID, including a malformed ID |
 | 500 | `internal_error` | Unexpected failure. Details are logged, never returned. |
 
 ## JWT
@@ -630,7 +630,7 @@ ERROR:
 |---|---|---|
 | Token missing, malformed or rejected | `Unauthenticated` | `a valid bearer token is required` |
 | A field breaks a [user rule](#user-rules) | `InvalidArgument` | `request validation failed`, with a `google.rpc.BadRequest` detail listing each field |
-| `id` is not 24 hexadecimal characters | `InvalidArgument` | `id must be a 24-character hexadecimal string` |
+| `id` is not 24 lowercase hexadecimal characters | `InvalidArgument` | `id must be a 24-character lowercase hexadecimal string` |
 | No user has this ID | `NotFound` | `user not found` |
 | Email already registered | `AlreadyExists` | `email is already registered` |
 | Anything unexpected | `Internal` | `internal server error`, with the cause logged as `rpc failed` |
@@ -787,7 +787,7 @@ The requirements leave some points open. These are the readings this implementat
 - **"Update a user's name or email" is a partial update.** `PATCH` changes only the fields sent. The password cannot be changed, because that should require the current password, which the requirements do not cover.
 - **Email addresses are case-insensitive.** They are trimmed and lowercased before they are stored or looked up, and uniqueness applies to that form.
 - **"List all users" is paginated.** It returns at most 100 users per request (20 by default), newest first, so the response size stays bounded.
-- **IDs are MongoDB ObjectIDs,** shown as 24 hexadecimal characters.
+- **IDs are MongoDB ObjectIDs** in their canonical form: 24 lowercase hexadecimal characters. Any other spelling, including upper case, is rejected as `invalid_id`, so one account always has exactly one ID string. `PATCH` and `DELETE` check ownership first, so there any `{id}` that is not exactly the caller's ID gets `403`, malformed or not.
 - **"Every 10 seconds" starts after startup.** The first count is logged 10 seconds after the API starts.
 - **The gRPC server is secured.** "Optionally secure with token metadata" is read as a yes, and both RPCs take the same bearer token as REST.
 - **"Mock MongoDB interactions where appropriate" means at the port.** Unit tests mock the `UserRepository` interface. The MongoDB adapter itself is tested against a real database, because a mocked driver would not show real behaviour such as the unique index.
@@ -830,7 +830,7 @@ The requirements leave some points open. These are the readings this implementat
 - **The worker never takes the API down.** A failed count is logged and retried at the next tick. Errors caused by shutdown cancelling an in-flight count are expected, so they are not logged as errors.
 - **Request logging wraps the whole router.** It sits outside routing and authentication, so it also records requests that never reach a handler: unknown paths, wrong methods, rejected tokens. Request lines are always `INFO`. The cause of a `500` is logged once at `ERROR` where it happens, not repeated by the request logger.
 - **The status recorder keeps the writer's other features.** The wrapper records the first status, or `200` once a body is written, matching what `net/http` sends. It implements `Unwrap`, so `http.ResponseController` can still reach the real writer (for example to flush).
-- **Authentication is a use case.** A token counts only while its user exists, which is a business rule, not just a JWT check. `userservice.Authenticator` verifies the token through the `TokenVerifier` port (the JWT adapter) and looks the user up through the narrow `UserFinder` port. The HTTP middleware calls it, and the gRPC interceptor will too, so the rule exists once. The JWT adapter still owns every signature and claim check.
+- **Authentication is a use case.** A token counts only while its user exists, which is a business rule, not just a JWT check. `userservice.Authenticator` verifies the token through the `TokenVerifier` port (the JWT adapter) and checks that the user still exists through the narrow `UserChecker` port. Its MongoDB adapter runs a `FindOne` on `_id` that returns only `_id`, so it stops at the first match and never loads the password hash. The HTTP middleware and the gRPC interceptor both call it, so the rule exists once. The JWT adapter still owns every signature and claim check.
 - **Deleting an account revokes its tokens immediately.** The existence check costs one `_id` lookup per protected request, which keeps tokens stateless while closing the window a deleted user would otherwise have until `exp`. A failed lookup is a `500`, never a `401`, so a database outage does not log everyone out.
 - **The middleware lives in the HTTP adapter package.** A separate package would have to export or copy the JSON error helpers to return the same error shape.
 - **Rejections do not say why.** Missing, malformed, expired and forged tokens all get the same `401` body. Only the RFC 6750 `WWW-Authenticate` header separates "no token" from "bad token", which the client already knows.
