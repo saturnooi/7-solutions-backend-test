@@ -13,46 +13,6 @@ docker compose up --build
 
 The REST API is then on `http://localhost:8080` and gRPC on `localhost:9090`. To try it, [register, log in and use the token](#using-the-token). For development without Docker, see [Running locally](#running-locally).
 
-## Requirements coverage
-
-| Requirement | Where |
-|---|---|
-| User model: ID, name, unique email, hashed password, creation time | [User rules](#user-rules), [internal/domain/user](internal/domain/user) |
-| Registration, and login that returns a JWT | [POST /api/v1/auth/register](#post-apiv1authregister), [POST /api/v1/auth/login](#post-apiv1authlogin) |
-| HS256 tokens, validated by middleware on protected routes | [JWT](#jwt), [internal/adapters/http/auth.go](internal/adapters/http/auth.go) |
-| Create, get by ID, list, update name or email, delete | [REST API](#rest-api) |
-| Official MongoDB Go driver | [internal/adapters/repository/mongodb](internal/adapters/repository/mongodb) |
-| Logging middleware: method, path, execution time | [Logging](#logging) |
-| Goroutine logging the user count every 10 seconds | [Background worker](#background-worker) |
-| Unit tests with the standard `testing` package, MongoDB mocked where appropriate | [Testing and coverage](#testing-and-coverage) |
-| Bonus: Docker and docker-compose | [Running with Docker](#running-with-docker) |
-| Bonus: interfaces that abstract MongoDB | `UserRepository` port in [internal/application/userservice/ports.go](internal/application/userservice/ports.go) |
-| Bonus: input validation | [User rules](#user-rules) |
-| Bonus: graceful shutdown with `context.Context` | [Graceful shutdown](#graceful-shutdown) |
-| Bonus: gRPC `CreateUser` and `GetUser`, secured with token metadata | [gRPC](#grpc) |
-| Bonus: hexagonal architecture | [Architecture](#architecture) |
-| Deliverables: setup, JWT guide, sample requests and responses, assumptions and design decisions | This README: [Assumptions](#assumptions), [Design decisions](#design-decisions) |
-
-## Status
-
-| Phase | Scope | Status |
-|---|---|---|
-| 0 | Project foundation: tooling, lint rules, coverage gate, live reload | Done |
-| 1 | User domain: entity, validation rules, domain errors | Done |
-| 2 | User registration: use case, MongoDB repository, bcrypt, `POST /api/v1/auth/register` | Done |
-| 3 | Login and JWT issuing: `POST /api/v1/auth/login`, HS256 access tokens | Done |
-| 4 | JWT middleware and the protected `POST /api/v1/users` | Done |
-| 5 | Get user by ID: `GET /api/v1/users/{id}` | Done |
-| 6 | List users: `GET /api/v1/users` with limit/offset pagination | Done |
-| 7 | Update user: `PATCH /api/v1/users/{id}`, own account only | Done |
-| 8 | Delete user: `DELETE /api/v1/users/{id}`, own account only; tokens of deleted users stop working | Done |
-| 9 | HTTP logging middleware: method, path, status, duration | Done |
-| 10 | Background worker: logs the user count every 10 seconds | Done |
-| 11 | gRPC: `CreateUser` and `GetUser`, token required | Done |
-| 12 | Docker and Docker Compose: API image, health checks, full stack | Done |
-| 13 | End-to-end integration tests through the real composition root | Done |
-| 14 | Final quality gate: requirements, architecture, security, tests, Docker, documentation | Done |
-
 ## Architecture
 
 Dependencies point inward: adapters depend on the application core, and the core never depends on adapters, frameworks, or drivers.
