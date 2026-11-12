@@ -255,11 +255,19 @@ All bodies are JSON. Errors share one shape:
 {"error":{"code":"<machine-readable code>","message":"<human-readable message>"}}
 ```
 
+These apply to every path, in addition to each endpoint's own codes:
+
+| Status | Code | When |
+|---|---|---|
+| 404 | `not_found` | No route matches the path |
+| 405 | `method_not_allowed` | The path exists but not with this method. The `Allow` header lists the methods it accepts. |
+| 499 | `request_canceled` | An `/api/v1` request whose use case stopped because the request itself was canceled, usually because the client disconnected or gave up. Logged at `INFO`, not as an error. Any other failure is still a `500`, even if the client has left. `/healthz` answers `503` instead. |
+
 ### GET /healthz
 
 Auth: none
 
-Reports whether the API can reach MongoDB. It pings with a 2-second limit and never returns the cause, which is logged as `health check failed`.
+Reports whether the API can reach MongoDB. It pings with a 2-second limit and never returns the cause, which is logged at `ERROR` as `health check failed`. A probe that disconnects before the ping finishes is logged at `INFO` as `health check canceled`.
 
 | Status | Body | When |
 |---|---|---|
@@ -633,6 +641,7 @@ ERROR:
 | `id` is not 24 lowercase hexadecimal characters | `InvalidArgument` | `id must be a 24-character lowercase hexadecimal string` |
 | No user has this ID | `NotFound` | `user not found` |
 | Email already registered | `AlreadyExists` | `email is already registered` |
+| The client canceled the call or its deadline passed, and the call stopped because of it | `Canceled` or `DeadlineExceeded` | Logged at `INFO` as `rpc canceled`, not as an error |
 | Anything unexpected | `Internal` | `internal server error`, with the cause logged as `rpc failed` |
 
 The `BadRequest` detail carries the same field messages as the REST `fields` array, for example `name: is required`. Go clients read it with `status.Convert(err).Details()`. grpcurl prints it as raw bytes, because it only loads `user.proto`.
@@ -657,7 +666,7 @@ The API writes JSON lines to standard output with `log/slog`. A middleware aroun
 
 Request logs never include headers (so never the `Authorization` token), request or response bodies (so never passwords or emails), or the query string. The second line above came from `GET /api/v1/users?limit=5&offset=0` with a bearer token, and neither appears in it.
 
-When a request fails with `500`, a separate `ERROR` line named `request failed` records the real cause. The client only ever sees `internal_error`.
+When a request fails with `500`, a separate `ERROR` line named `request failed` records the real cause. The client only ever sees `internal_error`. A request that stopped because it was canceled (the client left, or a forced shutdown closed its connection) is logged at `INFO` as `request canceled`, so `ERROR` lines are left for real failures.
 
 ## Background worker
 
@@ -806,7 +815,7 @@ The requirements leave some points open. These are the readings this implementat
 - **Lengths are counted the way each limit needs.** Names and the password minimum count characters, so Thai text (3 bytes per character) is not cut short and three Thai letters do not pass as an 8-character password. The email maximum (RFC 5321) and the password maximum (bcrypt reads only 72 bytes) count bytes.
 - **Emails are lowercased and must have a dotted domain.** Lowercasing the whole address makes the uniqueness check reliable. RFC 5321 allows a case-sensitive local part, but mainstream providers do not use one. A dotless domain such as `alice@gmail` is almost always a typo, so it is rejected. Intranet addresses such as `admin@localhost` are rejected for the same reason. Internationalized addresses (RFC 6531) are accepted.
 - **Email uniqueness is enforced by a unique index.** The repository inserts and maps MongoDB's duplicate-key error to `ErrEmailAlreadyExists`. Checking for an existing email first would leave a race between two concurrent registrations.
-- **Request bodies are decoded strictly.** Unknown fields are rejected, which blocks mass-assignment attempts such as `"role":"admin"`. The body must be one JSON value and at most 1 MiB.
+- **Request bodies are decoded strictly.** Unknown fields are rejected, which blocks mass-assignment attempts such as `"role":"admin"`. The body must be one JSON value and at most 1 MiB. The limit is `http.MaxBytesHandler` around the whole router, outside the logging and route-error wrappers, so `net/http` sees the limit being hit and closes the connection instead of reading the rest of an oversized body.
 - **Internal errors never reach the client.** Unexpected errors are logged with the method and path, and the client receives only `internal_error`. Passwords and hashes are never logged, and responses never contain a hash.
 - **bcrypt cost defaults to 12.** Registration then takes about 230 ms on a laptop. `BCRYPT_COST` accepts 10 to 14: 10 is the common minimum recommendation, and 14 keeps one hash around 1 second on a laptop, well inside the 10-second HTTP write timeout.
 - **Every MongoDB call has a timeout.** The client is created with a 5-second operation timeout, so a call without its own deadline cannot hang a request.
@@ -827,6 +836,7 @@ The requirements leave some points open. These are the readings this implementat
 - **No server reflection.** Clients use the proto file, which is the contract anyway. Reflection would be a one-line addition if wanted.
 - **The worker is a driving adapter.** Like the HTTP handlers, it calls a use case (`CountUsers`) through a one-method interface it declares, and depguard stops it from reaching the repository directly. The use case does not know a ticker exists.
 - **One errgroup owns the long-running parts.** The server, the worker and the shutdown step share one cancellable context, so a signal or a server failure stops everything, and `main` returns the first real error. The listener is opened before anything starts, so `http server listening` is logged only once the port is actually bound.
+- **Only the request's own cancellation is a cancellation.** A failure becomes `499` (REST) or `Canceled`/`DeadlineExceeded` (gRPC) only when the error wraps the request context's own error (`errors.Is(err, ctx.Err())`), which happens when the client leaves or a forced shutdown closes its connection. Anything else stays a `500` or `Internal` with an `ERROR` log. For example, MongoDB's own 5-second timeout while the client disconnects is still an error, so a real database failure is never hidden behind a client that happened to leave. The worker applies the same rule at shutdown.
 - **The worker never takes the API down.** A failed count is logged and retried at the next tick. Errors caused by shutdown cancelling an in-flight count are expected, so they are not logged as errors.
 - **Request logging wraps the whole router.** It sits outside routing and authentication, so it also records requests that never reach a handler: unknown paths, wrong methods, rejected tokens. Request lines are always `INFO`. The cause of a `500` is logged once at `ERROR` where it happens, not repeated by the request logger.
 - **The status recorder keeps the writer's other features.** The wrapper records the first status, or `200` once a body is written, matching what `net/http` sends. It implements `Unwrap`, so `http.ResponseController` can still reach the real writer (for example to flush).
@@ -852,6 +862,7 @@ The requirements leave some points open. These are the readings this implementat
 
 - The local MongoDB container has no authentication. It is published only on `127.0.0.1`.
 - HTTP and gRPC are served without TLS. In production, TLS is expected to end at a load balancer or proxy in front of the API.
+- A gRPC call whose deadline runs out during a MongoDB call can, in a narrow window, be logged as `rpc failed` and answered `Internal` instead of `rpc canceled`. The driver can report the deadline, or predict that it will be missed, a moment before the context itself reports it as expired. The client has already given up by then and sees `DeadlineExceeded` from its own deadline.
 - govulncheck still lists one advisory at module level: `golang.org/x/crypto/openpgp` is unmaintained (GO-2026-5932). This code uses only `bcrypt` from that module and never calls `openpgp`, and no tagged release of `x/crypto` fixes it yet.
 - A machine with `GOTOOLCHAIN=local` ignores the `toolchain` line, so a Go older than 1.26.11 should be upgraded by hand before running the API locally.
 - gRPC calls are not written to the request log. Failed calls are logged as `rpc failed`, but there is no per-call line like the HTTP `http request` line.
