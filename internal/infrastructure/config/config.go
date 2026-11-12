@@ -15,7 +15,7 @@ const (
 	defaultMongoDatabase = "user_management"
 	defaultBcryptCost    = 12
 	minBcryptCost        = bcrypt.DefaultCost
-	maxBcryptCost        = bcrypt.MaxCost
+	maxBcryptCost        = 14
 	defaultJWTIssuer     = "user-management-api"
 	defaultJWTTTL        = time.Hour
 	minJWTSecretBytes    = 32

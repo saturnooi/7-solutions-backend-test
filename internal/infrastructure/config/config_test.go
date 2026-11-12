@@ -80,17 +80,17 @@ func TestLoad(t *testing.T) {
 		{
 			name:    "bcrypt cost is not a number",
 			env:     required(map[string]string{"BCRYPT_COST": "high"}),
-			wantErr: "config: BCRYPT_COST must be an integer from 10 to 31",
+			wantErr: "config: BCRYPT_COST must be an integer from 10 to 14",
 		},
 		{
 			name:    "bcrypt cost below 10",
 			env:     required(map[string]string{"BCRYPT_COST": "9"}),
-			wantErr: "config: BCRYPT_COST must be an integer from 10 to 31",
+			wantErr: "config: BCRYPT_COST must be an integer from 10 to 14",
 		},
 		{
-			name:    "bcrypt cost above 31",
-			env:     required(map[string]string{"BCRYPT_COST": "32"}),
-			wantErr: "config: BCRYPT_COST must be an integer from 10 to 31",
+			name:    "bcrypt cost above 14",
+			env:     required(map[string]string{"BCRYPT_COST": "15"}),
+			wantErr: "config: BCRYPT_COST must be an integer from 10 to 14",
 		},
 		{
 			name:    "missing JWT_SECRET",
@@ -121,7 +121,7 @@ func TestLoad(t *testing.T) {
 			name: "every problem is reported",
 			env:  map[string]string{"BCRYPT_COST": "4", "JWT_TTL": "soon"},
 			wantErr: "config: MONGO_URI is required\n" +
-				"BCRYPT_COST must be an integer from 10 to 31\n" +
+				"BCRYPT_COST must be an integer from 10 to 14\n" +
 				"JWT_SECRET is required and must be at least 32 bytes\n" +
 				"JWT_TTL must be a positive duration such as 15m or 1h",
 		},
