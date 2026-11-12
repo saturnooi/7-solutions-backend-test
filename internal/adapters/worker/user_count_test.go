@@ -70,6 +70,16 @@ func TestUserCountLogger_Run(t *testing.T) {
 			want:      []string{"INFO user count worker started 10s", "INFO user count worker stopped"},
 			wantCalls: 1,
 		},
+		{
+			name: "a real failure during shutdown is still an error",
+			count: func(ctx context.Context, _ int) (int64, error) {
+				<-ctx.Done()
+				return 0, errDatabase
+			},
+			runFor:    15 * time.Second,
+			want:      []string{"INFO user count worker started 10s", "ERROR count users failed " + errDatabase.Error(), "INFO user count worker stopped"},
+			wantCalls: 1,
+		},
 	}
 
 	for _, tt := range tests {
