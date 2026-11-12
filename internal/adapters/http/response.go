@@ -10,7 +10,10 @@ import (
 	"user-management-api/internal/domain/user"
 )
 
-const maxBodyBytes = 1 << 20
+const (
+	maxBodyBytes              = 1 << 20
+	statusClientClosedRequest = 499
+)
 
 var errTrailingData = errors.New("request body has data after the JSON object")
 
@@ -88,6 +91,12 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, err 
 	}
 	if errors.Is(err, userservice.ErrInvalidCredentials) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
+		return
+	}
+
+	if errors.Is(err, r.Context().Err()) {
+		h.logger.InfoContext(r.Context(), "request canceled", "method", r.Method, "path", r.URL.Path, "error", err)
+		writeError(w, statusClientClosedRequest, "request_canceled", "request was canceled before it completed")
 		return
 	}
 
