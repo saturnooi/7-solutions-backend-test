@@ -26,8 +26,7 @@ func requireAuth(auth Authenticator, logger *slog.Logger) grpc.UnaryServerInterc
 			if errors.Is(err, userservice.ErrUnauthenticated) {
 				return nil, errUnauthenticated
 			}
-			logger.ErrorContext(ctx, "rpc failed", "method", info.FullMethod, "error", err)
-			return nil, errInternal
+			return nil, unexpected(ctx, logger, info.FullMethod, err)
 		}
 		return handler(ctx, req)
 	}

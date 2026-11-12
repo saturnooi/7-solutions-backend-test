@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
@@ -26,7 +27,15 @@ func (s *userServer) toStatus(ctx context.Context, err error) error {
 	}
 
 	method, _ := grpc.Method(ctx)
-	s.logger.ErrorContext(ctx, "rpc failed", "method", method, "error", err)
+	return unexpected(ctx, s.logger, method, err)
+}
+
+func unexpected(ctx context.Context, logger *slog.Logger, method string, err error) error {
+	if errors.Is(err, ctx.Err()) {
+		logger.InfoContext(ctx, "rpc canceled", "method", method, "error", err)
+		return status.FromContextError(ctx.Err()).Err()
+	}
+	logger.ErrorContext(ctx, "rpc failed", "method", method, "error", err)
 	return errInternal
 }
 
