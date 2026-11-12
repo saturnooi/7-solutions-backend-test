@@ -31,7 +31,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:9090:9090"
-    stop_grace_period: 15s
+    stop_grace_period: 20s
 
 volumes:
   mongo-data:
