@@ -34,8 +34,8 @@ down: ## Stop the API and MongoDB (data stays in the mongo-data volume)
 db-up: ## Start MongoDB in Docker and wait until it is healthy
 	docker compose up -d --wait mongo
 
-db-down: ## Stop MongoDB (data stays in the mongo-data volume)
-	docker compose down
+db-down: ## Stop the MongoDB container only (its data stays in the mongo-data volume)
+	docker compose stop mongo
 
 mocks: ## Regenerate test mocks from .mockery.yml
 	$(MOCKERY)
