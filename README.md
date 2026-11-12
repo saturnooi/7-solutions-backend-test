@@ -686,11 +686,10 @@ If a count fails, the worker logs `count users failed` at `ERROR` with the cause
 `main` runs the HTTP server, the gRPC server and the worker in one `errgroup`, tied to a context that `SIGINT` (Ctrl+C) or `SIGTERM` cancels. On a signal:
 
 1. The worker stops at its next select and logs `user count worker stopped`.
-2. The HTTP server stops accepting connections and waits for in-flight requests (`http.Server.Shutdown`).
-3. The gRPC server does the same (`GracefulStop`). If calls are still running when the 10-second shutdown budget runs out, it is stopped hard (`Stop`).
-4. The MongoDB client disconnects, and the process exits with status 0.
+2. At the same time, under one 10-second deadline, the HTTP server and the gRPC server stop accepting new work and wait for in-flight requests (`http.Server.Shutdown`, `GracefulStop`). Work still running when the deadline passes is cut off: gRPC with `Stop`, HTTP with `http.Server.Close`. Both close the connections and cancel the handlers' contexts, but neither waits for those handlers to return, so one that is still unwinding may log a failed database call after MongoDB disconnects. The process then exits with status 1, because the shutdown was not clean.
+3. The MongoDB client disconnects, and the process exits with status 0 after a clean shutdown.
 
-In Docker, `docker compose stop` or `down` sends `SIGTERM`, and Compose waits up to 15 seconds (`stop_grace_period`), longer than the 10-second budget above, before killing the container. In a real run the API stopped cleanly in about 1 second, with exit code 0.
+In Docker, `docker compose stop` or `down` sends `SIGTERM`, and Compose waits up to 20 seconds (`stop_grace_period`) before killing the container: the 10-second budget above, plus up to 5 seconds for the MongoDB disconnect, with room to spare. In a real run the API stopped cleanly in about 1 second, with exit code 0.
 
 A second signal during shutdown terminates the process immediately. Both listeners are opened before anything starts. If either cannot start, for example because a port is taken, nothing else starts, the error is logged as `api stopped`, and the process exits with status 1:
 
@@ -706,7 +705,7 @@ A second signal during shutdown terminates the process immediately. Both listene
 | `make up` | Build and start the API and MongoDB in Docker, and wait until both are healthy |
 | `make down` | Stop the API and MongoDB, keeping the data |
 | `make db-up` | Start MongoDB in Docker and wait until it is healthy |
-| `make db-down` | Stop MongoDB, keeping its data |
+| `make db-down` | Stop the MongoDB container started by `make db-up`, keeping its data. `make down` stops the full stack. |
 | `make mocks` | Regenerate test mocks from [.mockery.yml](.mockery.yml) |
 | `make proto` | Regenerate `gen/` from `proto/`. Needs `protoc`. The Go plugins are installed at pinned versions into the git-ignored `bin/`. |
 | `make fmt` | Format all Go files in place |
@@ -829,7 +828,7 @@ The requirements leave some points open. These are the readings this implementat
 - **The health check runs every 10 seconds.** Docker 24 runs the first check only after one interval (`--start-interval` needs Docker 25), so a 30-second interval made `docker compose up --wait` take 32 seconds. With 10 seconds it takes 13. Each check also appears in the request log.
 - **Compose does not refuse a missing secret; the API does.** `${JWT_SECRET:?...}` would stop Compose from parsing the file at all, which would also break `make db-up` and the integration tests for anyone without a `.env`. `${JWT_SECRET:-}` passes an empty value, and the API's own fail-fast check stops the container with a clear message.
 - **Published ports are bound to `127.0.0.1`.** A local `docker compose up` does not expose the API or MongoDB to the rest of the network.
-- **The Go toolchain is pinned to a patched release.** `go.mod` keeps `go 1.26.0` as the minimum, and `toolchain go1.26.11` makes the go command use 1.26.11 when the local Go is older (with the default `GOTOOLCHAIN=auto`). govulncheck found 19 standard-library vulnerabilities reachable from this code under go1.26.5, and none under go1.26.11. The Docker build already uses 1.26.11. `golang.org/x/net` was raised to v0.62.0 for two advisories in its `html` package.
+- **The Go toolchain is pinned to a patched release.** `go.mod` keeps `go 1.26.0` as the minimum, and `toolchain go1.26.11` makes the go command use 1.26.11 when the local Go is older (with the default `GOTOOLCHAIN=auto`). govulncheck found 19 standard-library vulnerabilities reachable from this code under go1.26.5, and none under go1.26.11. The Dockerfile pins `golang:1.26.11-alpine`, because the official Go images set `GOTOOLCHAIN=local` and would ignore the `toolchain` line. `golang.org/x/net` was raised to v0.62.0 for two advisories in its `html` package.
 - **gRPC is a second front door, not a second implementation.** The gRPC adapter calls the same `Register` and `GetUser` use cases and the same `Authenticator` as HTTP, so validation, uniqueness and token rules exist once. It only maps requests to inputs, users to messages, and errors to status codes.
 - **Both RPCs require a token,** matching their REST counterparts. Ambiguous metadata (two `authorization` values) is rejected instead of picking one.
 - **Generated code is committed.** `gen/` is reproducible with `make proto`, but committing it means building, testing and running never need `protoc`. Plugin versions are pinned in the Makefile and installed into the project's `bin/`, not globally.
